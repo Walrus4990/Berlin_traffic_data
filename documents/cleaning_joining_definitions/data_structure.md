@@ -36,11 +36,11 @@ erDiagram
         int Richtung_Direction
         int Fahrspur_Lane
         int Geschwindigkeit_Speed
-        int Eintrittsg_EntryGap
-        int Austrittsg_ExitGap
+        int Eintrittsgeschwindigkeit_EntrySpeed
+        int Austrittsgeschwindigkeit_ExitSpeed
         int LaengeDm_LengthDm
-        int Klasse_Class
-        string Fahrzeugklasse_VehicleClass
+        int Klasse_ClassCode
+        string Fahrzeugklasse_VehicleClassWord
         int SchallDB_SoundDB
         int Abstand_Distance
     }
@@ -50,9 +50,8 @@ erDiagram
 
 
 ## Sample Data
-## Sample Data
 
-**Deployment (Einsatz)**
+**Deployment (Auftrag in data folder)**
 | Startdatum | Enddatum | Beschreibung | Geräte-ID | Gerätetyp | Standorttitel | Stadt | Inhaber | Erstellt |
 |---|---|---|---|---|---|---|---|---|
 | *Start Date* | *End Date* | *Description* | *Device ID* | *Device Type* | *Location Title* | *City* | *Owner* | *Created* |
@@ -65,7 +64,7 @@ erDiagram
 | 14/03/2026 13:00:00 | 01/01/2100 23:59:59 | DD 7871 Schulenburgring | 7871 | DD.plus | DD 7871 Schulenburgring | Berlin Tempelhof-Schöneberg | | 17/03/2026 09:55:50 |
 | 16/08/2025 14:00:00 | 14/03/2026 11:00:00 | Fahrtrichtung Nord | 7872 | DD.plus | DD 7872 Monopolstraße Fr. Nord | Berlin Tempelhof-Schöneberg | | 26/08/2025 08:02:55 |
 
-**Location (Standort)**
+**Location (Standort in data folder)**
 | Standorttitel | Beschreibung | Straße | Hausnummer | Postleitzahl | Stadt | Land | Fahrtrichtung | Gegenrichtung | Benutzer Position Lat | Benutzer Position Long | Gemessene Position Lat | Gemessene Position Long | Inhaber | Erstellt |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | *Location Title* | *Description* | *Street* | *House No.* | *Postal Code* | *City* | *Country* | *Travel Direction* | *Opposite Direction* | *User Lat* | *User Long* | *Measured Lat* | *Measured Long* | *Owner* | *Created* |
@@ -81,7 +80,9 @@ erDiagram
 | DD 8041 Handjerystraße | in Hö. H.-Nr. 23 | Handjerystraße | 23 | 12159 | Berlin Tempelhof-Schöneberg | Deutschland | Niedstraße | Albestraße | 52.473196 | 13.332578 | 0.00 | 0.00 | | 21/03/2025 08:13:14 |
 | DD 8048 Tirschenreuther Ring | i.H. Marienfelder Grundschule | Tirschenreuther Ring | 71 | 12279 | Berlin Tempelhof-Schöneberg | Deutschland | Luckweg | Ahrensdorfer Straße | 52.410720 | 13.355099 | 0.00 | 0.00 | | 17/03/2025 14:57:39 |
 
-**Traffic (Verkehr)**
+**Traffic (Rohdaten in data folder)**
+Several tables to be appended
+
 | Geräte-ID | Datum | Richtung | Fahrspur | Geschwindigkeit (km/h) | Eintrittsgeschwindigkeit (km/h) | Austrittsgeschwindigkeit (km/h) | Länge (dm) | Klasse | Fahrzeugklassen-Bezeichnung | Schall (dB) | Abstand (cm) |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | *Device ID* | *Date* | *Direction* | *Lane* | *Speed (km/h)* | *Entry Speed (km/h)* | *Exit Speed (km/h)* | *Length (dm)* | *Class* | *Vehicle Class Name* | *Sound (dB)* | *Distance (cm)* |
