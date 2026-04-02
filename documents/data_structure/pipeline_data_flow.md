@@ -23,6 +23,7 @@
 
 ## Raw data layer:
 
+```
 raw/
 ├── weekly/
 │   └── 2026-03-31/
@@ -32,6 +33,7 @@ raw/
 └── reference/
     ├── DDweb_Auftrag_31032026_1706.xlsx          ← deployment
     └── DDweb_Standort_01042026_1658.xlsx         ← location
+```
 
 
 ## Processed Medallion structure on PostgreSQl Database
