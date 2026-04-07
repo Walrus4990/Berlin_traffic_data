@@ -1,1 +1,1 @@
-# push final tables to DB
+# push final tables

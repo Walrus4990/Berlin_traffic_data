@@ -1,1 +1,1 @@
-# merge, aggregate, and feature transformations
+# merge, aggregate, and transformations
