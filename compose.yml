@@ -1,0 +1,146 @@
+
+x-common: &common           #anchor to avoid repeating restart and networks
+  restart: on-failure
+  networks:
+    - traffic-net
+
+services:
+
+#-------------PostgreSQL traffic database
+  postgres-traffic:
+    <<: *common
+    image: postgres:14
+    environment:
+      - POSTGRES_DB=$POSTGRES_TRAFFIC_DB
+      - POSTGRES_PASSWORD=$POSTGRES_TRAFFIC_PASSWORD
+      - POSTGRES_USER=$POSTGRES_TRAFFIC_USER
+    volumes:
+      - postgres-traffic-data:/var/lib/postgresql/data
+      #- ./sql/init/:/docker-entrypoint-initdb.d/ WE NEED TO DISCUSS SCHEMAS
+    ports:
+      - "5432:5432"
+    profiles: [local, full]
+
+#-------------PostgreSQL Airflow metadata
+  postgres-airflow:
+    <<: *common
+    image: postgres:14
+    environment:
+      - POSTGRES_DB=$POSTGRES_AIRFLOW_DB
+      - POSTGRES_PASSWORD=$POSTGRES_AIRFLOW_PASSWORD
+      - POSTGRES_USER=$POSTGRES_AIRFLOW_USER
+    volumes:
+      - ./postgres-airflow-data:/:/var/lib/postgresql/data
+    ports:
+      - "5433:5432" #might be an error with the port allocation
+    profiles: [full]
+
+# ---------- Airflow
+
+  scheduler:
+    <<: *common
+    image: apache/airflow:2.3.0
+    depends_on:
+      - postgres-airflow
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --local || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DEBUG__FAIL_FAST=true
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:$POSTGRES_PASSWORD@postgres-airflow:5432/db
+      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+    volumes:
+      - ./dags/:/opt/airflow/dags/
+      - ./data/:/opt/airflow/data/
+      - ./logs:/opt/airflow/logs
+    tty: true
+    stdin_open: true
+    profiles: [full]
+
+  webserver:
+    <<: *common
+    image: apache/airflow:2.3.0
+    depends_on:
+      - postgres
+      - scheduler
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:$POSTGRES_PASSWORD@postgres-airflow:5432/db
+      - POSTGRES_DB=$POSTGRES_AIRFLOW_DB
+      - POSTGRES_PASSWORD=$POSTGRES_AIRFLOW_PASSWORD
+      - POSTGRES_USER=airflow
+    volumes:
+      - ./dags/:/opt/airflow/dags/
+      - ./data/:/opt/airflow/data/
+      - ./logs:/opt/airflow/logs
+
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+    tty: true
+    stdin_open: true
+    profiles: [full]
+
+
+# ---------- MinIO
+
+  minio:
+    <<: *common
+    image: minio/minio:latest
+    environment:
+      - MINIO_ROOT_USER=$MINIO_ROOT_USER
+      - MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001"
+    profiles: [full]
+
+
+# -------- Superset
+  superset:
+    <<: *common
+    image: apache/superset:latest
+    environment:
+      - SUPERSET_SECRET_KEY=$SUPERSET_SECRET_KEY
+    volumes:
+      - superset-data:/app/superset_home
+      - ./dashboard/:/app/superset_home/exports/
+    ports:
+      - "8088:8088"
+    depends_on:
+      - postgres-traffic
+    command: >
+      sh -c "
+        superset db upgrade &&
+        superset fab create-admin
+          --username ${SUPERSET_ADMIN_USER}
+          --firstname Admin
+          --lastname Admin
+          --email admin@example.com
+          --password ${SUPERSET_ADMIN_PASSWORD} &&
+        superset init &&
+        superset run -h 0.0.0.0 -p 8088
+      "
+    profiles: [local, full]
+
+
+volumes:
+  postgres-traffic-data:
+  postgres-airflow-data:
+  superset-data:
+  logs:
+  minio-data:
+
+networks:
+  traffic-net:
+    driver: bridge
