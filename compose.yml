@@ -190,7 +190,6 @@ volumes:
   postgres-data-quality:
   postgres-airflow-data:
   superset-data:
-  logs:
   minio-data:
 
 networks:
