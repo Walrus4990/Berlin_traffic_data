@@ -1,10 +1,14 @@
+# core
 pandas==2.2.2
 openpyxl==3.1.2
 sqlalchemy==2.0.30
 psycopg2-binary==2.9.9
 python-dotenv==1.0.1
 minio==7.2.7
-apache-airflow==2.3.0
+pydantic==2.7.1
+
+# dev
+black
 
 
 # How to use it:
