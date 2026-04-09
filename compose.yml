@@ -22,7 +22,7 @@ services:
       - postgres-traffic-data:/var/lib/postgresql/data
       #- ./sql/init/:/docker-entrypoint-initdb.d/ DOES NOT EXIST YET; CAN WE SPECIFY SCHEMAS LATER?
     ports:
-      - "5432:5432" #check if I actually need this Docker services on the same network talk to each other, only add if i need to look at the data
+      - "5431:5432" #check if I actually need this Docker services on the same network talk to each other, only add if i need to look at the data
     profiles: [local, full]
 
 #-------------PostgreSQL data quality database
@@ -163,7 +163,7 @@ services:
 # -------- Superset
   superset:
     <<: *common
-    image: apache/superset:3.1.0
+    image: apache/superset:6.0.0
     depends_on:
       postgres-traffic:
          condition: service_healthy
@@ -179,7 +179,7 @@ services:
       - superset-data:/app/superset_home
       - ./dashboard/:/app/superset_home/exports/
     ports:
-      - "8088:8088"
+      - "8089:8088"
     command: |
       bash -c "superset db upgrade && superset fab create-admin --username ${SUPERSET_ADMIN_USER} --firstname Admin --lastname Admin --email admin@example.com --password ${SUPERSET_ADMIN_PASSWORD} && superset init && superset run -h 0.0.0.0 -p 8088"
     profiles: [local, full]
