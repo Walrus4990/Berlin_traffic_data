@@ -1,7 +1,7 @@
 shared_pipeline/
 ├── common/
 │   ├── ingest.py          ← functions to pull raw data from sources
-│   ├── clean.py           ← data cleaning functions
+│   ├── clean.ipynb        ← data cleaning functions
 │   ├── transform.py       ← merge, aggregate, and feature transformations
 │   ├── analyze.py         ← compute metrics for dashboards or reports
 │   └── publish.py         ← push final tables to DB
@@ -10,10 +10,10 @@ shared_pipeline/
 │   └── dag_tempelhof.py   ← Airflow DAG orchestrating the pipeline
 │
 ├── dashboard/
-│   └── tempelhof_dashboard_export.zip   ← Superset dashboard export
+│   └── ts_dashboard_export.zip   ← Superset dashboard export
 │
 ├── sql/
-│   └── tempelhof_queries/
+│   └── ts_queries/
 │
 ├── tests/
 │   ├── test_ingest.py
