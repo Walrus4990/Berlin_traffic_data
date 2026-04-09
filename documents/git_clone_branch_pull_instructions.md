@@ -34,7 +34,7 @@ main          ← final code only
 ## How this works in practice
 
 1. whenever you start on a new work package **check out the latest code** from the `main`branch:
-     `git checkout dev`
+     `git checkout main`
      `git pull`
 
 2. if you start a new work package, **create your own new branch**. Give it a name that makes sense:
