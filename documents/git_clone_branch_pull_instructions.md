@@ -24,7 +24,7 @@ This doc explains
 ## Branching structure
 ```
 main          ← final code only
-└── dev       ← where we work and test
+└──
     ├── ingest        ← one branch
     ├── cleaning      ← another branch
     ├── dashboard     ← another branch
@@ -33,7 +33,7 @@ main          ← final code only
 
 ## How this works in practice
 
-1. whenever you start on a new work package **check out the latest code** from the `dev`branch:
+1. whenever you start on a new work package **check out the latest code** from the `main`branch:
      `git checkout dev`
      `git pull`
 
@@ -49,14 +49,14 @@ main          ← final code only
     `git checkout dashboard_sliders`
 
 5. It's good practice to **regularily check and sync** work from collaborators (i.e. every 24h):
-    `git merge origin/dev`          ← grab anything collaborators merged yesterday
+    `git merge origin main`          ← grab anything collaborators merged yesterday
 
 6. Once you are done with your work package **submit your work** via a pull request:
-    `gh pr create`  ← follow prompts, add title (summary of work), body (more detail), base branch (use `dev`)
+    `gh pr create`  ← follow prompts, add title (summary of work), body (more detail), base branch (use `main`)
 
     or use full command:
 
-    `gh pr create --base dev --title "added data cleaning logic" --body "implemented clean_data function in ingest_clean.py"`
+    `gh pr create --base main --title "added data cleaning logic" --body "implemented clean_data function in ingest_clean.py"`
 
 7. Supervisor will get notification on GitHub, they approve, leave comments or request changes.
 
@@ -64,8 +64,8 @@ main          ← final code only
    `gh pr view --comments`
 
 9.  Once the code is final, the supervisor will approve it (easiest via GitHub UI). You will see that your branch shows as merged. Quickly **verify your code is there**:
-    `git checkout dev`
-    `git pull origin dev`
+    `git checkout main`
+    `git pull origin main`
 
 10. Once the work package is completed, **delete your branch** to keep the repo tidy:
     `git branch -d dashboard_sliders`
