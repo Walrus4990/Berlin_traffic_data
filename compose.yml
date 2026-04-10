@@ -163,10 +163,12 @@ services:
 # -------- Superset
   superset:
     <<: *common
-    image: apache/superset:6.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile.superset
     depends_on:
       postgres-traffic:
-         condition: service_healthy
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8088/health || exit 1"]
       interval: 30s
