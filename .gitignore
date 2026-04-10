@@ -1,6 +1,7 @@
 *.log
 superset/
 .venv/
+venv/
 .ipynb_checkpoints/
 __pycache__/
 *.pyc

@@ -1,7 +1,11 @@
 # NOTES
 
-## To Dos 9 April:
+## To Dos 14 April:
+* Please start documenting design decisions in ARD files (see example [[publishing_pipeline_ard]]). LLM can help you with that.
+*
 
+
+## To Dos 9 April:
 
 * please put all data in the `data` folder, even mock data. Try to follow the bronze, silver, gold structure. : `documents/data_structure/pipeline_data_flow.md`
 
