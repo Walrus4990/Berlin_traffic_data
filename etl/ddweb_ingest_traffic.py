@@ -1,0 +1,197 @@
+# INGEST TRAFFIC SENSOR DATA
+    # following functions:
+    # 1. Helper function (date parsing, chunking) - private '_name' only to be used for this ingest purpose
+    # 2. Single downloader for all data chunks for one mission_id
+    # 3. Orchestrator (loops over all missions)
+
+import time
+import logging
+import calendar
+from pathlib import Path
+from datetime import date, datetime, timezone
+import re
+
+import requests
+
+from etl.ddweb_auth import DDWebAuth
+
+logger = logging.getLogger(__name__)
+
+BASE_URL = "https://ddweb.topo-web.com"
+DOWNLOAD_DIR = Path("./data/raw/")
+
+ANALYSIS_MODEL = 6
+
+TRAFFIC_PAYLOAD_FIELDS = {
+    "EntryExitVelocity": "True",
+    "CarClassificationNew": "gkf",
+    "TrafficLane": "1",
+    "VelocityIntervalId": "2279",
+    "TimeIntervalId": "763",
+    "Interval": "3",
+    "AudioTreshold": "60",
+    "FilterName": "",
+    "SaveFilter": "false",
+}
+
+VELOCITY_GROUPS = 6
+WEEKDAYS = 7
+
+# --- Date parsing: Convert milliseconds (ms) string from file to Python date.
+
+def _parse_date(raw: str) -> date:
+    ms = int(re.search(r'\d+', raw).group())  # extract only the numbers
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).date()
+
+
+# --- Chunking -
+
+def _get_month_chunks(from_date: date, to_date: date) -> list[tuple[date, date]]:
+    chunks = []
+    cursor = from_date
+
+    while cursor <= to_date:
+        last_day = calendar.monthrange(cursor.year, cursor.month)[1]        # picks the last day of any month
+        chunk_end = min(date(cursor.year, cursor.month, last_day), to_date) # picks whatever is sooner, the last day of the month  or mission end
+        chunks.append((cursor, chunk_end))
+
+        if cursor.month == 12:
+            cursor = date(cursor.year + 1, 1, 1)            # in December move to first month of next year
+        else:
+            cursor = date(cursor.year, cursor.month + 1, 1) # Move to first day of next month
+
+    return chunks
+
+
+# --- Build payload to pass parametres to DDWEB portal
+
+def _build_payload(mission_id: int, from_date: date, to_date: date) -> list[tuple]:
+
+    payload = [
+        ("OrderId", str(mission_id)),         #confusingly the website uses OrderId sometimes for mission_id
+        ("AnalysisModel", str(ANALYSIS_MODEL)),
+    ]
+
+    for key, value in TRAFFIC_PAYLOAD_FIELDS.items():
+        payload.append((key, value))
+
+    for i in range(VELOCITY_GROUPS):            #check if we can delete these from payload they don't do anything
+        payload.append((f"VelocityGroup[{i}]", "true"))
+        payload.append((f"VelocityGroup[{i}]", "false"))
+
+    for i in range(WEEKDAYS):                   #check if we can delete these from payload they don't do anything
+        payload.append((f"Weekday[{i}]", "true"))
+        payload.append((f"Weekday[{i}]", "false"))
+
+    payload.append(("FromDate", from_date.strftime("%d.%m.%Y")))
+    payload.append(("ToDate", to_date.strftime("%d.%m.%Y")))
+
+    return payload
+
+# --- 4-step download flow ---
+#  Step 1: trigger analysis, return analysisresultid.
+
+def _do_analyze(session: requests.Session, mission_id: int, payload: list) -> int:
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": f"{BASE_URL}/AnalysisX/Index?missionid={mission_id}&filterId=0",
+    }
+    response = session.post(f"{BASE_URL}/AnalysisX/DoAnalyze", data=payload, headers=headers)
+    response.raise_for_status()
+    body = response.json()
+    if not body.get("Success"):
+        raise RuntimeError(f"DoAnalyze failed for mission {mission_id}: {body}")
+    return body["theModelId"]
+
+
+# Step 2: trigger server-side result preparation. Response content not needed
+
+def _get_partial_result(session: requests.Session, analysis_id: int) -> None:
+
+    timestmp = int(time.time() * 1000)
+    response = session.get(
+        f"{BASE_URL}/AnalysisX/GetPartialAnalysisResult",
+        params={"analysisresultid": analysis_id, "_": timestmp},
+    )
+    response.raise_for_status()
+
+
+# Step 3: get FileGuid and FileName.
+
+def _get_file_metadata(session: requests.Session, analysis_id: int) -> tuple[str, str]:
+
+    timestmp = int(time.time() * 1000)  #server wants a different timestamp each time
+    response = session.get(
+        f"{BASE_URL}/AnalysisX/ExportAnalysisExcelJson",
+        params={"id": ANALYSIS_MODEL, "analysisresultid": analysis_id, "_": timestmp},
+    )
+    response.raise_for_status()
+    body = response.json()
+    return body["FileGuid"], body["FileName"]
+
+
+# Step 4: download binary xlsx, save with our own filename
+
+def _download_excel(
+    session: requests.Session,
+    file_guid: str,
+    mission_id: int,
+    from_date: date,
+    to_date: date,) -> Path:
+
+    response = session.get(
+        f"{BASE_URL}/AnalysisX/DownloadExcel",
+        params={"fileGuid": file_guid, "filename": f"mission_{mission_id}.xlsx"},
+    )
+    response.raise_for_status()
+
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    filename = f"mission_{mission_id}_{from_date.strftime('%Y%m%d')}_{to_date.strftime('%Y%m%d')}.xlsx"
+    filepath = DOWNLOAD_DIR / filename
+    filepath.write_bytes(response.content)
+    logger.info(f"Saved {filepath}")
+    return filepath
+
+
+# ---  Download all monthly chunks for one mission
+
+def download_mission(auth: DDWebAuth, mission_id: int, from_date: date, to_date: date) -> list[Path]:
+    chunks = _get_month_chunks(from_date, to_date)
+    mission_files = []
+
+    for chunk_start, chunk_end in chunks:
+        logger.info(f"Mission {mission_id}: downloading {chunk_start} to {chunk_end}")
+        try:
+            auth.ensure_authenticated()
+            payload = _build_payload(mission_id, chunk_start, chunk_end)
+            analysis_id = _do_analyze(auth.session, mission_id, payload)
+            _get_partial_result(auth.session, analysis_id)
+            file_guid, _ = _get_file_metadata(auth.session, analysis_id)
+            filepath = _download_excel(auth.session, file_guid, mission_id, chunk_start, chunk_end)
+            mission_files.append(filepath)
+        except Exception as e:
+            logger.error(f"Mission {mission_id} chunk {chunk_start}–{chunk_end} failed: {e}")
+            raise
+        time.sleep(20)      #ensure requesst come at human scale
+
+    return mission_files
+
+
+# --- Loop over all missions in DataFrame
+
+def complete_download(auth: DDWebAuth, missions_df) -> None:
+
+    today = date.today()
+
+    for _, row in missions_df.iterrows():
+        mission_id = row["Id"]
+        from_date = _parse_date(row["FromDate"])
+        to_date = min(_parse_date(row["ToDate"]), today)
+
+        try:
+            download_mission(auth, mission_id, from_date, to_date)
+        except Exception as e:
+            logger.error(f"Mission {mission_id} aborted: {e}")
+            # Continue to next mission rather than killing the whole run
+            continue
