@@ -11,7 +11,7 @@ load_dotenv()       #loads environmental variables from .env
 
 # ------- create class to store login and authentication info throughout session
 
-class DDWebSession:
+class DDWebAuth:
     BASE_URL = "https://ddweb.topo-web.com"
     LOGIN_URL = f"{BASE_URL}/Account/Login"
 

@@ -1,22 +1,22 @@
 # Pipeline data flow
 
-1. Pulls 28 traffic Excel files every week→ append to bronze_traffic
-2. Pulls deployment_file → compares to stored bronze_deployment →
+1. Pulls traffic Excel files every week→ append to bronze_traffic
+2. Pulls missions_file → compares to stored bronze_mission →
 
- **If new deployment detected:**
+ **If new mission-id detected:**
 
-   1. Update bronze_deployment
+   1. Update bronze_mission
    2. Pull location file → update bronze_location with new location(s)
-   3. Update silver_active_deployment with new sensor locations
-   4. Copy location data from silver_active_deployment into this week's new traffic rows
+   3. Update silver_active_mission with new sensor locations
+   4. Copy location data from silver_active_mision into this week's new traffic rows
    5. Run full cleaning routine on merged rows
    6. Append cleaned rows to silver_traffic
    7. Rerun gold aggregations
 
   **If no change:**
 
-   1. Look up sensor location from silver_active_deployment (simple key lookup, not a full join)
-   3. Copy location and deployment from look-up table in each new row
+   1. Look up sensor location from silver_active_mission (simple key lookup, not a full join)
+   3. Copy location and mission from look-up table in each new row
    4. Run reduced cleaning
    5. Append cleaned rows to silver_traffic
    6. Rerun gold
@@ -31,7 +31,7 @@ raw/
 │       ├── DDweb_VI_Rohdaten_31032026_1641.xls  ← traffic sensor 2
 │       └── ... (28 files, last 4 digits differ)
 └── reference/
-    ├── DDweb_Auftrag_31032026_1706.xlsx          ← deployment
+    ├── DDweb_Auftrag_31032026_1706.xlsx          ← mission
     └── DDweb_Standort_01042026_1658.xlsx         ← location
 ```
 
@@ -44,9 +44,9 @@ All tables live in the same PostgreSQL database: `berlin_traffic`
 | Layer | Table | Source File | Updates |
 |---|---|---|---|
 | Bronze | bronze_traffic | DDweb_VI_Rohdaten_* | weekly append |
-| Bronze | bronze_deployment | DDweb_Auftrag_* | when changed |
+| Bronze | bronze_mission | DDweb_Auftrag_* | when changed |
 | Bronze | bronze_location | DDweb_Standort_* | when changed |
-| Silver | silver_active_deployment | derived from bronze_deployment | when changed |
+| Silver | silver_active_mission | derived from bronze_mission | when changed |
 | Silver | silver_traffic | derived from bronze_traffic | weekly append |
 | Gold | gold_by_location | derived from silver_traffic | weekly rerun |
 | Gold | gold_by_vehicle | derived from silver_traffic | weekly rerun |
