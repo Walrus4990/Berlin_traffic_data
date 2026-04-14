@@ -8,7 +8,8 @@ import time
 import logging
 import calendar
 from pathlib import Path
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 import re
 
 import requests
@@ -37,35 +38,36 @@ TRAFFIC_PAYLOAD_FIELDS = {
 VELOCITY_GROUPS = 6
 WEEKDAYS = 7
 
-# --- Date parsing: Convert milliseconds (ms) string from file to Python date.
+# --- Date parsing: Convert milliseconds (ms) string to datetime and back watching out for timezone
 
-def _parse_date(raw: str) -> date:
-    ms = int(re.search(r'\d+', raw).group())  # extract only the numbers
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).date()
+def _parse_date(raw: str) -> datetime:
+    ms = int(re.search(r"\d+", raw).group())
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).astimezone(
+        ZoneInfo("Europe/Berlin")
+    )
 
+# --- Chunking
 
-# --- Chunking -
-
-def _get_month_chunks(from_date: date, to_date: date) -> list[tuple[date, date]]:
+def _get_month_chunks(from_date: datetime, to_date: datetime) -> list[tuple[datetime, datetime]]:
     chunks = []
     cursor = from_date
 
     while cursor <= to_date:
         last_day = calendar.monthrange(cursor.year, cursor.month)[1]        # picks the last day of any month
-        chunk_end = min(date(cursor.year, cursor.month, last_day), to_date) # picks whatever is sooner, the last day of the month  or mission end
+        chunk_end = min(datetime(cursor.year, cursor.month, last_day, tzinfo=from_date.tzinfo), to_date) # picks whatever is sooner, the last day of the month  or mission end
         chunks.append((cursor, chunk_end))
 
         if cursor.month == 12:
-            cursor = date(cursor.year + 1, 1, 1)            # in December move to first month of next year
+            cursor = datetime(cursor.year + 1, 1, 1, tzinfo=from_date.tzinfo)            # in December move to first month of next year
         else:
-            cursor = date(cursor.year, cursor.month + 1, 1) # Move to first day of next month
+            cursor = datetime(cursor.year, cursor.month + 1, 1, tzinfo=from_date.tzinfo) # Move to first day of next month
 
     return chunks
 
 
 # --- Build payload to pass parametres to DDWEB portal
 
-def _build_payload(mission_id: int, from_date: date, to_date: date) -> list[tuple]:
+def _build_payload(mission_id: int, chunk_start: datetime, chunk_end: datetime) -> list[tuple]:
 
     payload = [
         ("OrderId", str(mission_id)),         #confusingly the website uses OrderId sometimes for mission_id
@@ -83,8 +85,8 @@ def _build_payload(mission_id: int, from_date: date, to_date: date) -> list[tupl
         payload.append((f"Weekday[{i}]", "true"))
         payload.append((f"Weekday[{i}]", "false"))
 
-    payload.append(("FromDate", from_date.strftime("%d.%m.%Y")))
-    payload.append(("ToDate", to_date.strftime("%d.%m.%Y")))
+    payload.append(("FromDate", chunk_start.strftime("%d.%m.%Y %H:%M")))
+    payload.append(("ToDate", chunk_end.strftime("%d.%m.%Y %H:%M")))
 
     return payload
 
@@ -137,8 +139,8 @@ def _download_excel(
     session: requests.Session,
     file_guid: str,
     mission_id: int,
-    from_date: date,
-    to_date: date,) -> Path:
+    chunk_start: datetime,
+    chunk_end: datetime,) -> Path:
 
     response = session.get(
         f"{BASE_URL}/AnalysisX/DownloadExcel",
@@ -147,7 +149,7 @@ def _download_excel(
     response.raise_for_status()
 
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    filename = f"mission_{mission_id}_{from_date.strftime('%Y%m%d')}_{to_date.strftime('%Y%m%d')}.xlsx"
+    filename = f"mission_{mission_id}_{chunk_start.strftime('%Y%m%d')}_{chunk_end.strftime('%Y%m%d')}.xlsx"
     filepath = DOWNLOAD_DIR / filename
     filepath.write_bytes(response.content)
     logger.info(f"Saved {filepath}")
@@ -156,7 +158,7 @@ def _download_excel(
 
 # ---  Download all monthly chunks for one mission
 
-def download_mission(auth: DDWebAuth, mission_id: int, from_date: date, to_date: date) -> list[Path]:
+def download_mission(auth: DDWebAuth, mission_id: int, from_date: datetime, to_date: datetime) -> list[Path]:
     chunks = _get_month_chunks(from_date, to_date)
     mission_files = []
 
@@ -182,7 +184,7 @@ def download_mission(auth: DDWebAuth, mission_id: int, from_date: date, to_date:
 
 def complete_download(auth: DDWebAuth, missions_df) -> None:
 
-    today = date.today()
+    today = datetime.now(tz=ZoneInfo("Europe/Berlin"))
 
     for _, row in missions_df.iterrows():
         mission_id = row["Id"]

@@ -5,3 +5,6 @@ venv/
 .ipynb_checkpoints/
 __pycache__/
 *.pyc
+data/raw/
+move_raw_data_to_vm.bash
+etl/testingest.py
