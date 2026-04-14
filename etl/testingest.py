@@ -1,49 +1,70 @@
-from etl.ddweb_auth import DDWebAuth
-from etl.ddweb_ingest_traffic import _build_payload, _do_analyze, _parse_date
-from etl.ddweb_ingest import fetch_missions
 from datetime import date
 
-auth = DDWebAuth()
-auth.ensure_authenticated()
+import etl.ddweb_auth as auth
+from etl.ddweb_ingest import fetch_missions
+import etl.ddweb_ingest_traffic as traffic
 
-missions_df = fetch_missions(auth)
+
+# --- Authenticate ---
+client = auth.DDWebAuth()
+client.ensure_authenticated()
+
+# --- Fetch missions ---
+missions_df = fetch_missions(client)
 print(missions_df[["Id", "FromDate", "ToDate"]].head())
 
-row = missions_df[missions_df["Id"] == 40671].iloc[0]
-from_date = _parse_date(row["FromDate"])
-to_date = _parse_date(row["ToDate"])
-print(from_date, to_date) #2022-01-28 2023-04-29
 
+# =========================
+# TEST CASE 1
+# =========================
+mission_id = 40671
 
-payload = _build_payload(40671, date(2022, 2, 1), date(2022, 2, 28))
-analysis_id = _do_analyze(auth.session, 40671, payload)
-print(analysis_id)#294138
+row = missions_df[missions_df["Id"] == mission_id].iloc[0]
+from_date = traffic._parse_date(row["FromDate"])
+to_date = traffic._parse_date(row["ToDate"])
+print(from_date, to_date)
 
-from etl.ddweb_ingest_traffic import _get_partial_result
-_get_partial_result(auth.session, 294139)
+test_chunks=traffic._get_month_chunks(from_date, to_date)
+print(test_chunks)
 
-from etl.ddweb_ingest_traffic import _get_partial_result
-_get_partial_result(auth.session, 294139)
+payload = traffic._build_payload(
+    mission_id,
+    date(2022, 2, 1),
+    date(2022, 2, 28),
+)
 
-from etl.ddweb_ingest_traffic import _get_file_metadata
-file_guid, file_name = _get_file_metadata(auth.session, 294139)
+analysis_id = traffic._do_analyze(client.session, mission_id, payload)
+print(analysis_id)
+
+traffic._get_partial_result(client.session, analysis_id)
+
+file_guid, file_name = traffic._get_file_metadata(client.session, analysis_id)
 print(file_guid, file_name)
 
-from etl.ddweb_ingest_traffic import _download_excel
-filepath = _download_excel(auth.session, file_guid, 40671, date(2022, 2, 1), date(2022, 2, 28))
+filepath = traffic._download_excel(
+    client.session,
+    file_guid,
+    mission_id,
+    date(2022, 2, 1),
+    date(2022, 2, 28),
+)
 print(filepath)
 
-from etl.ddweb_auth import DDWebAuth
-from etl.ddweb_ingest import fetch_missions
-from etl.ddweb_ingest_traffic import download_mission, _parse_date
-from datetime import date
 
-auth = DDWebAuth()
-auth.ensure_authenticated()
+# =========================
+# TEST CASE 2
+# =========================
+mission_id = 40687
 
-missions_df = fetch_missions(auth)
-row = missions_df[missions_df["Id"] == 40687].iloc[0]
-from_date = _parse_date(row["FromDate"])
-to_date = _parse_date(row["ToDate"])
+row = missions_df[missions_df["Id"] == mission_id].iloc[0]
+from_date = traffic._parse_date(row["FromDate"])
+to_date = traffic._parse_date(row["ToDate"])
 print(from_date, to_date)
-download_mission(auth, 40687, from_date, to_date)
+
+traffic.download_mission(client, mission_id, from_date, to_date)
+
+
+# =========================
+# SANITY CHECK
+# =========================
+print(traffic._parse_date("1645794000000"))
