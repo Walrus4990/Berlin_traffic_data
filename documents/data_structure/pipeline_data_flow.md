@@ -1,6 +1,6 @@
 # Pipeline data flow
 
-1. Pulls traffic Excel files every week→ append to bronze_traffic
+1. Pulls new traffic Excel files every week→ append to bronze_traffic
 2. Pulls missions_file → compares to stored bronze_mission →
 
  **If new mission-id detected:**

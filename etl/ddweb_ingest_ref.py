@@ -3,6 +3,7 @@
 from etl.ddweb_auth import DDWebAuth
 import pandas as pd
 import logging
+from utils.db import get_traffic_engine, save
 
 logger = logging.getLogger(__name__)        # python error logging integrates with Airflow
 auth = DDWebAuth()
@@ -63,3 +64,8 @@ def fetch_locations(auth: DDWebAuth) -> pd.DataFrame:
     except Exception as e:
         logger.error (f"fetch_locations failed: {e}")
         raise
+
+def fetch_and_save_locations(auth: DDWebAuth) -> None:
+    df_locations = fetch_locations(auth)
+    with get_traffic_engine() as engine:
+        save(df_locations, "location", "bronze", engine)
