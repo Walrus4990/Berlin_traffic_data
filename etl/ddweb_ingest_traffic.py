@@ -11,9 +11,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 import re
-
 import requests
-
 from etl.ddweb_auth import DDWebAuth
 
 logger = logging.getLogger(__name__)
@@ -37,6 +35,8 @@ TRAFFIC_PAYLOAD_FIELDS = {
 
 VELOCITY_GROUPS = 6
 WEEKDAYS = 7
+
+
 
 # --- Date parsing: Convert milliseconds (ms) string to datetime and back watching out for timezone
 
@@ -153,6 +153,7 @@ def _download_excel(
     filepath = DOWNLOAD_DIR / filename
     filepath.write_bytes(response.content)
     logger.info(f"Saved {filepath}")
+    print(f"Saved {filepath}")
     return filepath
 
 
@@ -174,8 +175,9 @@ def download_mission(auth: DDWebAuth, mission_id: int, from_date: datetime, to_d
             mission_files.append(filepath)
         except Exception as e:
             logger.error(f"Mission {mission_id} chunk {chunk_start}–{chunk_end} failed: {e}")
-            raise
-        time.sleep(20)      #ensure requesst come at human scale
+            continue
+        finally:
+            time.sleep(20)      #ensure requesst come at human scale
 
     return mission_files
 
