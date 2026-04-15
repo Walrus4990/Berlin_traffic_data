@@ -107,16 +107,36 @@ def _do_analyze(session: requests.Session, mission_id: int, payload: list) -> in
     return body["theModelId"]
 
 
-# Step 2: trigger server-side result preparation. Response content not needed
+# Step 2: poll until the server-side analysis is ready.
+# The portal prepares the result asynchronously — we must wait before
+# requesting the file, otherwise we get an empty Excel.
 
-def _get_partial_result(session: requests.Session, analysis_id: int) -> None:
+def _get_partial_result(session: requests.Session, analysis_id: int,
+                        max_attempts: int = 10, wait_seconds: float = 3.0) -> None:
+    for attempt in range(1, max_attempts + 1):
+        timestmp = int(time.time() * 1000)
+        response = session.get(
+            f"{BASE_URL}/AnalysisX/GetPartialAnalysisResult",
+            params={"analysisresultid": analysis_id, "_": timestmp},
+        )
+        response.raise_for_status()
 
-    timestmp = int(time.time() * 1000)
-    response = session.get(
-        f"{BASE_URL}/AnalysisX/GetPartialAnalysisResult",
-        params={"analysisresultid": analysis_id, "_": timestmp},
-    )
-    response.raise_for_status()
+        try:
+            body = response.json()
+            # Portal returns IsReady=true (or equivalent truthy key) when done.
+            if body.get("IsReady") or body.get("isReady") or body.get("Ready"):
+                return
+        except Exception:
+            # Non-JSON response — treat as ready (older portal behaviour)
+            return
+
+        logger.debug("Analysis %d not ready yet (attempt %d/%d) — waiting %.0fs",
+                     analysis_id, attempt, max_attempts, wait_seconds)
+        time.sleep(wait_seconds)
+
+    # If we exhausted retries, continue anyway — worst case is an empty file.
+    logger.warning("Analysis %d: readiness check timed out after %d attempts.",
+                   analysis_id, max_attempts)
 
 
 # Step 3: get FileGuid and FileName.
