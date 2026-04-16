@@ -74,12 +74,12 @@ def _load_bronze_traffic() -> pd.DataFrame:
                          "Geschwindigkeit (km/h)", "Richtung"]
     TRAFFIC_RENAME = {
         "Geräte-ID":                       "device_id",
-        "Datum":                           "datum_raw",
+        "Datum":                           "date_raw",
         "Eintrittsgeschwindigkeit (km/h)": "speed_entry",
         "Austrittsgeschwindigkeit (km/h)": "speed_exit",
-        "Länge (dm)":                      "laenge_dm",
-        "Klasse":                          "klasse",
-        "Fahrzeugklassen-Bezeichnung":     "klasse_label",
+        "Länge (dm)":                      "length_dm",
+        "Klasse":                          "vehicle_class",
+        "Fahrzeugklassen-Bezeichnung":     "vehicle_class_label",
     }
     files = sorted(DATA_DIR.glob("DDweb_VI_Rohdaten_*.xlsx"))
     frames = []
@@ -102,14 +102,14 @@ def _load_bronze_traffic() -> pd.DataFrame:
 def _load_bronze_mission() -> pd.DataFrame:
     # Auftrag file column → bronze.mission column
     RENAME = {
-        "Geräte-ID":   "device_id",
-        "Startdatum":  "startdatum",
-        "Enddatum":    "enddatum",
-        "Beschreibung": "beschreibung",
-        "Gerätetyp":   "geraetetyp",
-        "Standorttitel": "standorttitel",
-        "Stadt":       "stadt",
-        "Erstellt":    "erstellt",
+        "Geräte-ID":     "device_id",
+        "Startdatum":    "start_date",
+        "Enddatum":      "end_date",
+        "Beschreibung":  "description",
+        "Gerätetyp":     "device_type",
+        "Standorttitel": "location_title",
+        "Stadt":         "city",
+        "Erstellt":      "created_at",
     }
     files = sorted(DATA_DIR.glob("DDweb_Auftrag_*.xlsx"))
     if not files:
@@ -117,8 +117,8 @@ def _load_bronze_mission() -> pd.DataFrame:
     df = pd.read_excel(files[-1])   # most recent
     df = df.rename(columns={k: v for k, v in RENAME.items() if k in df.columns})
     df["device_id"]  = df["device_id"].astype(str).str.strip()
-    df["startdatum"] = pd.to_datetime(df["startdatum"], errors="coerce")
-    df["enddatum"]   = pd.to_datetime(df["enddatum"],   errors="coerce")
+    df["start_date"] = pd.to_datetime(df["start_date"], errors="coerce")
+    df["end_date"]   = pd.to_datetime(df["end_date"],   errors="coerce")
     df["mission_id"] = range(1, len(df) + 1)   # Auftrag export has no Id column
     print(f"  missions: {files[-1].name}  →  {len(df)} rows, "
           f"{df['device_id'].nunique()} unique devices")
@@ -130,17 +130,17 @@ def _load_bronze_mission() -> pd.DataFrame:
 def _load_bronze_location() -> pd.DataFrame:
     # Standort file column → bronze.location column
     RENAME = {
-        "Standorttitel":          "standorttitel",
-        "Beschreibung":           "beschreibung",
-        "Straße":                 "strasse",
-        "Hausnummer":             "hausnummer",
-        "Postleitzahl":           "postleitzahl",
-        "Stadt":                  "stadt",
-        "Fahrtrichtung":          "fahrtrichtung",
-        "Gegenrichtung":          "gegenrichtung",
+        "Standorttitel":          "location_title",
+        "Beschreibung":           "description",
+        "Straße":                 "street",
+        "Hausnummer":             "street_number",
+        "Postleitzahl":           "zipcode",
+        "Stadt":                  "city",
+        "Fahrtrichtung":          "driving_direction",
+        "Gegenrichtung":          "opposite_direction",
         "Benutzer Position Lat":  "lat",
         "Benutzer Position Long": "lon",
-        "Erstellt":               "erstellt",
+        "Erstellt":               "created_at",
     }
     files = sorted(DATA_DIR.glob("DDweb_Standort_*.xlsx"))
     if not files:
@@ -160,8 +160,8 @@ def _load_bronze_location() -> pd.DataFrame:
 def _build_windows(df_mission: pd.DataFrame) -> dict:
     windows: dict = {}
     for _, row in df_mission.iterrows():
-        start = row.get("startdatum")
-        end   = row.get("enddatum")
+        start = row.get("start_date")
+        end   = row.get("end_date")
         start_ts = pd.Timestamp(start) if pd.notna(start) else None
         if not start_ts:
             continue
@@ -209,7 +209,7 @@ if __name__ == "__main__":
     df = step_parse_timestamps(df)
     print(f"  Date range: {df['datum_parsed'].min()} → {df['datum_parsed'].max()}")
     print(f"  flag_unparseable_timestamp: {df['flag_unparseable_timestamp'].sum():,}")
-    _show(df[["device_id", "datum_raw", "datum_parsed", "datum", "stunde", "wochentag"]], n=3)
+    _show(df[["device_id", "date_raw", "datum_parsed", "datum", "stunde", "wochentag"]], n=3)
 
     print("\n── Step 2: unknown device check ────────────────────────")
     df = step_flag_unknown_device(df, known_ids)
@@ -264,8 +264,8 @@ if __name__ == "__main__":
 
     print("\nSample rows (geo-enriched, any_flag=False):")
     clean = df_silver[~df_silver["any_flag"]]
-    _show(clean[["device_id", "datum_parsed", "klasse_label", "speed_entry",
-                 "speed_exit", "standorttitel", "lat", "lon", "flag_no_coords"]], n=5)
+    _show(clean[["device_id", "datum_parsed", "vehicle_class_label", "speed_entry",
+                 "speed_exit", "location_title", "lat", "lon", "flag_no_coords"]], n=5)
 
     print("\nFlag summary on silver.traffic:")
     _flag_counts(df_silver, [
