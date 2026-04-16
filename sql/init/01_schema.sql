@@ -145,8 +145,7 @@ CREATE TABLE IF NOT EXISTS gold.traffic (
     modal_share_pkw         NUMERIC,
     modal_share_fahrrad     NUMERIC,
     modal_share_lkw         NUMERIC,
-    modal_share_krad        NUMERIC,
-    aggregated_at           TIMESTAMP DEFAULT NOW()
+    modal_share_krad        NUMERIC
 );
 
 
