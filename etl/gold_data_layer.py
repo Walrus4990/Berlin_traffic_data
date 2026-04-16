@@ -193,7 +193,6 @@ def run_gold(engine: Engine) -> dict:
 
     df_hourly = build_hourly(df_silver)
     _check_gold_hourly(df_hourly, n_input=len(df_silver))
-    df_hourly["aggregated_at"] = pd.Timestamp.now()
     df_hourly.to_sql("traffic", engine, schema="gold", if_exists="replace", index=False)
     logger.info("Wrote %d rows to gold.traffic.", len(df_hourly))
     result = {"rows_traffic": len(df_hourly)}
