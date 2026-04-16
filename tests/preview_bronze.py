@@ -27,30 +27,30 @@ DOWNLOAD_DIR = ROOT / "data" / "DDWEB_Downloads"
 
 MISSION_RENAME = {
     "Id":            "mission_id",
-    "Created":       "erstellt",
-    "FromDate":      "startdatum",
-    "ToDate":        "enddatum",
-    "Description":   "beschreibung",
-    "LocationTitle": "standorttitel",
-    "City":          "stadt",
-    "Street":        "strasse",
-    "StreetNumber":  "hausnummer",
-    "Zipcode":       "postleitzahl",
+    "Created":       "created_at",
+    "FromDate":      "start_date",
+    "ToDate":        "end_date",
+    "Description":   "description",
+    "LocationTitle": "location_title",
+    "City":          "city",
+    "Street":        "street",
+    "StreetNumber":  "street_number",
+    "Zipcode":       "zipcode",
     "DeviceNumber":  "device_id",
-    "DeviceType":    "geraetetyp",
+    "DeviceType":    "device_type",
 }
 
 LOCATION_RENAME = {
     "Id":                "location_id",
-    "Created":           "erstellt",
-    "Description":       "beschreibung",
-    "LocationTitle":     "standorttitel",
-    "Street":            "strasse",
-    "StreetNumber":      "hausnummer",
-    "Zipcode":           "postleitzahl",
-    "City":              "stadt",
-    "DrivingDirection":  "fahrtrichtung",
-    "OppositeDirection": "gegenrichtung",
+    "Created":           "created_at",
+    "Description":       "description",
+    "LocationTitle":     "location_title",
+    "Street":            "street",
+    "StreetNumber":      "street_number",
+    "Zipcode":           "zipcode",
+    "City":              "city",
+    "DrivingDirection":  "driving_direction",
+    "OppositeDirection": "opposite_direction",
     "PosUserLat":        "lat",
     "PosUserLng":        "lon",
 }
@@ -62,12 +62,12 @@ TRAFFIC_COLS_DROP = [
 
 TRAFFIC_RENAME = {
     "Geräte-ID":                        "device_id",
-    "Datum":                            "datum_raw",
+    "Datum":                            "date_raw",
     "Eintrittsgeschwindigkeit (km/h)":  "speed_entry",
     "Austrittsgeschwindigkeit (km/h)":  "speed_exit",
-    "Länge (dm)":                       "laenge_dm",
-    "Klasse":                           "klasse",
-    "Fahrzeugklassen-Bezeichnung":      "klasse_label",
+    "Länge (dm)":                       "length_dm",
+    "Klasse":                           "vehicle_class",
+    "Fahrzeugklassen-Bezeichnung":      "vehicle_class_label",
 }
 
 
@@ -181,9 +181,9 @@ MOCK_LOCATIONS = pd.DataFrame([
 
 def preview_mission(df_missions: pd.DataFrame) -> pd.DataFrame:
     """Mirror of ingest_mission() — no DB write."""
-    df = df_missions.rename(columns=MISSION_RENAME).copy()
+    df = df_missions.rename(columns=MISSION_RENAME)
     df["device_id"] = df["device_id"].astype(str).str.strip()
-    for col in ("startdatum", "enddatum"):
+    for col in ("start_date", "end_date"):
         df[col] = pd.to_datetime(df[col], errors="coerce")
     df["ingested_at"] = pd.Timestamp.now()
     return df
@@ -191,7 +191,7 @@ def preview_mission(df_missions: pd.DataFrame) -> pd.DataFrame:
 
 def preview_location(df_locations: pd.DataFrame) -> pd.DataFrame:
     """Mirror of ingest_location() — no DB write."""
-    df = df_locations.rename(columns=LOCATION_RENAME).copy()
+    df = df_locations.rename(columns=LOCATION_RENAME)
     for col in ("lat", "lon"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df["ingested_at"] = pd.Timestamp.now()
