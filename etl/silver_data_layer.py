@@ -39,19 +39,19 @@ ACTIVE_SENTINELS = {
     pd.Timestamp("2100-01-01"),
 }
 
-DEDUP_COLS = ["device_id", "datum_parsed", "klasse", "speed_entry", "speed_exit", "laenge_dm"]
+DEDUP_COLS = ["device_id", "datum_parsed", "vehicle_class", "speed_entry", "speed_exit", "length_dm"]
 
 
 # ── Cleaning step functions ───────────────────────────────────────────────────
 
 def step_parse_timestamps(df: pd.DataFrame) -> pd.DataFrame:
-    """Parse datum_raw, extract date/hour/weekday, flag failures."""
+    """Parse date_raw, extract date/hour/weekday, flag failures."""
     def _parse(series):
         if pd.api.types.is_datetime64_any_dtype(series):
             return series
         return pd.to_datetime(series, dayfirst=True, errors="coerce")
 
-    df["datum_parsed"] = _parse(df["datum_raw"])
+    df["datum_parsed"] = _parse(df["date_raw"])
     df["datum"]        = df["datum_parsed"].dt.date
     df["stunde"]       = df["datum_parsed"].dt.hour
     df["wochentag"]    = df["datum_parsed"].dt.day_name()
@@ -66,15 +66,15 @@ def step_flag_unknown_device(df: pd.DataFrame, known_ids: set) -> pd.DataFrame:
 
 
 def step_flag_unclassifiable(df: pd.DataFrame) -> pd.DataFrame:
-    """Flag Klasse 6 / 250 (unclassifiable) rows."""
-    df["flag_unclassifiable"] = df["klasse"].isin(UNCLASSIFIABLE_CODES)
+    """Flag vehicle_class 6 / 250 (unclassifiable) rows."""
+    df["flag_unclassifiable"] = df["vehicle_class"].isin(UNCLASSIFIABLE_CODES)
     return df
 
 
 def step_flag_speed(df: pd.DataFrame) -> pd.DataFrame:
     """Flag implausible absolute speeds per vehicle class."""
-    is_motorised = df["klasse"].isin(MOTORISED_CLASSES)
-    is_bicycle   = df["klasse"] == BICYCLE_CLASS
+    is_motorised = df["vehicle_class"].isin(MOTORISED_CLASSES)
+    is_bicycle   = df["vehicle_class"] == BICYCLE_CLASS
 
     flag_entry = (
         (is_motorised & ((df["speed_entry"] > SPEED_MAX_MOTORISED) | (df["speed_entry"] < SPEED_MIN_MOTORISED))) |
@@ -124,12 +124,12 @@ def step_flag_ambiguous_location(df: pd.DataFrame, df_active_mission: pd.DataFra
     overlap_windows: list[dict] = []
 
     for device_id, group in df_active_mission.groupby("device_id"):
-        rows = group.sort_values("startdatum").reset_index(drop=True)
+        rows = group.sort_values("start_date").reset_index(drop=True)
         for i in range(len(rows)):
             for j in range(i + 1, len(rows)):
-                a_start = rows.loc[i, "startdatum"]
+                a_start = rows.loc[i, "start_date"]
                 a_end   = rows.loc[i, "deploy_end"]
-                b_start = rows.loc[j, "startdatum"]
+                b_start = rows.loc[j, "start_date"]
                 b_end   = rows.loc[j, "deploy_end"]
                 if pd.isna(a_start) or pd.isna(b_start):
                     continue
@@ -190,29 +190,29 @@ def build_mission(df_mission: pd.DataFrame, df_location: pd.DataFrame) -> pd.Dat
     Build silver_active_mission: one row per deployment,
     enriched with GPS coordinates from bronze_location.
 
-    Join key: standorttitel (LocationTitle from both portal tables).
+    Join key: location_title (LocationTitle from both portal tables).
     This column is confirmed to match exactly between missions and locations.
 
     Adds deploy_end: sentinel dates (2049, 2100) → pd.Timestamp.max so that
     enrich_with_location can use it for open-ended time-window matching.
     """
     df_mission = df_mission.copy()
-    df_mission["startdatum"] = pd.to_datetime(df_mission["startdatum"], errors="coerce")
-    df_mission["enddatum"]   = pd.to_datetime(df_mission["enddatum"],   errors="coerce")
+    df_mission["start_date"] = pd.to_datetime(df_mission["start_date"], errors="coerce")
+    df_mission["end_date"]   = pd.to_datetime(df_mission["end_date"],   errors="coerce")
 
-    loc_cols  = ["standorttitel", "strasse", "hausnummer", "postleitzahl", "fahrtrichtung", "gegenrichtung", "lat", "lon"]
-    available = [c for c in loc_cols if c in df_location.columns]  # standorttitel included here
+    loc_cols  = ["location_title", "street", "street_number", "zipcode", "driving_direction", "opposite_direction", "lat", "lon"]
+    available = [c for c in loc_cols if c in df_location.columns]  # location_title included here
 
     silver = df_mission.merge(
-        df_location[available].drop_duplicates("standorttitel"),
-        on="standorttitel",
+        df_location[available].drop_duplicates("location_title"),
+        on="location_title",
         how="left",
     )
     silver["device_id"]  = silver["device_id"].astype(str)
     silver["updated_at"] = pd.Timestamp.now()
 
     # deploy_end: sentinel dates mean "still active" → open-ended upper bound
-    silver["deploy_end"] = silver["enddatum"].apply(
+    silver["deploy_end"] = silver["end_date"].apply(
         lambda d: pd.Timestamp.max if pd.isna(d) or d in ACTIVE_SENTINELS else d
     )
     return silver.reset_index(drop=True)
@@ -223,11 +223,11 @@ def _get_deployment_windows(engine: Engine) -> dict:
     Load all deployment windows from bronze.mission as:
     { device_id: [(start, end), ...] }
     Sentinel end dates (2049, 2100) → pd.Timestamp.max (open-ended active deployments).
-    Closed missions use their actual enddatum.
+    Closed missions use their actual end_date.
     """
     with engine.connect() as conn:
         rows = conn.execute(
-            text("SELECT device_id::text, startdatum, enddatum FROM bronze.mission")
+            text("SELECT device_id::text, start_date, end_date FROM bronze.mission")
         ).fetchall()
 
     windows: dict = {}
@@ -258,7 +258,7 @@ def enrich_with_location(df: pd.DataFrame, df_mission: pd.DataFrame) -> pd.DataF
     """
     Join location columns onto traffic rows using a time-windowed merge:
     1. Left-join df to silver_active_mission on device_id
-    2. Keep only the row where datum_parsed falls within [startdatum, deploy_end)
+    2. Keep only the row where datum_parsed falls within [start_date, deploy_end)
     3. Rows with no matching window get NaN coordinates + flag_no_coords=True
 
     Uses a _row_id tag so the anti-join is exact: only rows that matched zero
@@ -272,8 +272,8 @@ def enrich_with_location(df: pd.DataFrame, df_mission: pd.DataFrame) -> pd.DataF
     df_mission = df_mission.copy()
     df_mission["device_id"] = df_mission["device_id"].astype(str)
 
-    geo_cols  = ["standorttitel", "strasse", "hausnummer", "postleitzahl",
-                 "fahrtrichtung", "lat", "lon", "startdatum", "deploy_end"]
+    geo_cols  = ["location_title", "street", "street_number", "zipcode",
+                 "driving_direction", "lat", "lon", "start_date", "deploy_end"]
     available = ["device_id"] + [c for c in geo_cols if c in df_mission.columns]
 
     # Tag each original row so we can do a proper anti-join after the expand
@@ -281,7 +281,7 @@ def enrich_with_location(df: pd.DataFrame, df_mission: pd.DataFrame) -> pd.DataF
     df_geo = df.merge(df_mission[available], on="device_id", how="left")
 
     window_match = (
-        df_geo["datum_parsed"].ge(df_geo["startdatum"]) &
+        df_geo["datum_parsed"].ge(df_geo["start_date"]) &
         df_geo["datum_parsed"].lt(df_geo["deploy_end"])
     )
     matched     = df_geo[window_match].drop(columns=["_row_id"])
@@ -304,7 +304,7 @@ def enrich_with_location(df: pd.DataFrame, df_mission: pd.DataFrame) -> pd.DataF
 def run_silver(new_mission_detected: bool, engine: Engine) -> dict:
     """
     Silver transformation run. Reads from bronze_* tables, writes to silver_*.
-
+    Silver uses this function to read bronze tables and write silver tables
     Returns dict with QA counts for the pipeline log.
     """
     logger.info("=== SILVER LAYER START (full=%s) ===", new_mission_detected)
