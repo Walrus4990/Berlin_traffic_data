@@ -1,0 +1,265 @@
+"""
+bronze.py — Bronze layer ingestion
+====================================
+Reads DataFrames produced by the DDweb ingest scripts and loads them into
+PostgreSQL bronze schema tables.
+
+Inputs:
+    df_missions  — DataFrame returned by ddweb_ingest_ref.fetch_missions()
+    df_locations — DataFrame returned by ddweb_ingest_ref.fetch_locations()
+    Traffic xlsx — files in DOWNLOAD_DIR written by ddweb_ingest_traffic.py
+
+Tables written:
+    bronze.mission   — deployment history, updated when changed
+    bronze.location  — location reference, full reload each run
+    bronze.traffic   — weekly append of raw sensor passage rows
+
+Entry point: run_bronze(df_missions, df_locations)
+Returns:     dict with "new_mission_detected" (bool) and row counts
+"""
+
+import logging
+import warnings
+from pathlib import Path
+
+import pandas as pd
+from sqlalchemy import Engine, text
+
+from utils.db import get_traffic_engine, save
+
+warnings.filterwarnings("ignore", category=UserWarning)
+
+logger = logging.getLogger(__name__)
+
+DOWNLOAD_DIR = Path("./data/DDWEB_Downloads/")
+
+# ── Column mapping: ingest file field names → bronze schema ──────────────────
+#
+# The DDweb ingest scripts return the raw portal API field names.
+MISSION_RENAME = {
+    "Id":            "mission_id",
+    "Created":       "erstellt",
+    "FromDate":      "startdatum",
+    "ToDate":        "enddatum",
+    "Description":   "beschreibung",
+    "LocationTitle": "standorttitel", # join key
+    "City":          "stadt",
+    "Street":        "strasse",
+    "StreetNumber":  "hausnummer",
+    "Zipcode":       "postleitzahl",
+    "DeviceNumber":  "device_id",     # primary identifier
+    "DeviceType":    "geraetetyp",
+}
+
+LOCATION_RENAME = {
+    "Id":                "location_id",
+    "Created":           "erstellt",
+    "Description":       "beschreibung",
+    "LocationTitle":     "standorttitel", # join key
+    "Street":            "strasse",
+    "StreetNumber":      "hausnummer",
+    "Zipcode":           "postleitzahl",
+    "City":              "stadt",
+    "DrivingDirection":  "fahrtrichtung",
+    "OppositeDirection": "gegenrichtung",
+    "PosUserLat":        "lat",
+    "PosUserLng":        "lon",
+}
+
+# Traffic Excel columns that are always zero — dropped before loading to bronze.
+TRAFFIC_COLS_DROP = [
+    "Schall (dB)", "Abstand (cm)", "Fahrspur",
+    "Geschwindigkeit (km/h)", "Richtung",
+]
+
+TRAFFIC_RENAME = {
+    "Geräte-ID":                        "device_id",
+    "Datum":                            "datum_raw",
+    "Eintrittsgeschwindigkeit (km/h)":  "speed_entry",
+    "Austrittsgeschwindigkeit (km/h)":  "speed_exit",
+    "Länge (dm)":                       "laenge_dm",
+    "Klasse":                           "klasse",
+    "Fahrzeugklassen-Bezeichnung":      "klasse_label",
+}
+
+
+def _table_exists(engine: Engine, table: str, schema: str = "bronze") -> bool:
+    with engine.connect() as conn:
+        return conn.execute(
+            text(
+                "SELECT EXISTS ("
+                "  SELECT 1 FROM information_schema.tables"
+                "  WHERE table_schema=:s AND table_name=:t"
+                ")"
+            ),
+            {"s": schema, "t": table},
+        ).scalar()
+
+
+def _get_existing_mission_keys(engine: Engine) -> set[tuple]:
+    """What does this function do:
+    Return (device_id, startdatum) pairs already stored in bronze.mission."""
+    if not _table_exists(engine, "mission"):
+        return set()
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT device_id::text, startdatum FROM bronze.mission")
+        ).fetchall()
+    return {(str(r[0]), pd.Timestamp(r[1])) for r in rows}
+
+
+def _load_traffic_file(fpath: Path) -> pd.DataFrame:
+    """
+    What does this function do:
+    Read one traffic Excel file saved by ddweb_ingest_traffic.download_mission(),
+    drop the always-zero columns, rename to bronze schema.
+    """
+    df = pd.read_excel(fpath, dtype={"Geräte-ID": str})
+    df["source_file"] = fpath.name
+    df = df.drop(columns=TRAFFIC_COLS_DROP, errors="ignore")
+    df = df.rename(columns=TRAFFIC_RENAME)
+    df["device_id"] = df["device_id"].astype(str).str.strip()
+    return df
+
+
+# ── Bronze layer functions ────────────────────────────────────────────────────
+
+def ingest_mission(df_missions: pd.DataFrame, engine: Engine) -> tuple[bool, int]:
+    """
+    Load the missions DataFrame (from ddweb_ingest_ref.fetch_missions()) into
+    bronze.mission. Only inserts rows whose (device_id, startdatum) key is new.
+
+    Returns:
+        (new_mission_detected, rows_added)
+    """
+    df = df_missions.rename(columns=MISSION_RENAME).copy()
+    df["device_id"] = df["device_id"].astype(str).str.strip()
+    for col in ("startdatum", "enddatum"):
+        df[col] = pd.to_datetime(df[col], errors="coerce")
+    df["ingested_at"] = pd.Timestamp.now()
+
+    existing_keys = _get_existing_mission_keys(engine)
+    new_keys = {
+        (str(row["device_id"]), pd.Timestamp(row["startdatum"]))
+        for _, row in df.iterrows()
+        if pd.notna(row["startdatum"])
+    }
+    truly_new = new_keys - existing_keys
+
+    if not truly_new:
+        logger.info("No new missions detected — bronze.mission unchanged.")
+        return False, 0
+
+    new_mask = df.apply(
+        lambda r: (str(r["device_id"]), pd.Timestamp(r["startdatum"])) in truly_new
+        if pd.notna(r["startdatum"]) else False,
+        axis=1,
+    )
+    rows_to_insert = df[new_mask].copy()
+    save(rows_to_insert, "mission", "bronze", engine)
+
+    logger.info(
+        "Inserted %d new mission row(s) into bronze.mission.", len(rows_to_insert)
+    )
+    return True, len(rows_to_insert)
+
+
+def ingest_location(df_locations: pd.DataFrame, engine: Engine) -> int:
+    """
+    Full-replace bronze.location from the locations DataFrame
+    (from ddweb_ingest_ref.fetch_locations()).
+    Returns number of rows written.
+    """
+    df = df_locations.rename(columns=LOCATION_RENAME).copy()
+    for col in ("lat", "lon"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["ingested_at"] = pd.Timestamp.now()
+
+    with engine.begin() as conn:
+        if _table_exists(engine, "location"):
+            conn.execute(text("TRUNCATE TABLE bronze.location"))
+
+    save(df, "location", "bronze", engine)
+    logger.info("Replaced bronze.location: %d rows written.", len(df))
+    return len(df)
+
+
+def ingest_traffic(engine: Engine) -> int:
+    """
+    Load all traffic Excel files from DOWNLOAD_DIR into bronze.traffic.
+    Files written by ddweb_ingest_traffic.py match the pattern mission_*.xlsx.
+
+    Skips files whose source_file name already exists in bronze.traffic -> idempotent
+
+    Returns number of rows appended.
+    """
+    traffic_files = sorted(DOWNLOAD_DIR.glob("DDweb_VI_Rohdaten_*.xlsx"))
+    if not traffic_files:
+        logger.warning("No traffic files found in %s", DOWNLOAD_DIR)
+        return 0
+
+    already_loaded: set[str] = set()
+    if _table_exists(engine, "traffic"):
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text("SELECT DISTINCT source_file FROM bronze.traffic")
+            ).fetchall()
+            already_loaded = {r[0] for r in rows}
+
+    total_rows = 0
+    for fpath in traffic_files:
+        if fpath.name in already_loaded:
+            logger.info("  Skipping (already loaded): %s", fpath.name)
+            continue
+
+        df = _load_traffic_file(fpath)
+        df["ingested_at"] = pd.Timestamp.now()
+        save(df, "traffic", "bronze", engine)
+        total_rows += len(df)
+        logger.info("  Loaded %d rows from %s", len(df), fpath.name)
+
+    logger.info("Traffic ingestion complete: %d rows appended.", total_rows)
+    return total_rows
+
+
+def run_bronze(df_missions: pd.DataFrame, df_locations: pd.DataFrame) -> dict:
+    """
+    Full bronze ingestion run — accepts DataFrames from the ingest scripts,
+    writes to PostgreSQL bronze schema.
+
+    Receives output from:
+        ddweb_ingest_ref.fetch_missions()   → df_missions
+        ddweb_ingest_ref.fetch_locations()  → df_locations
+        ddweb_ingest_traffic.py downloads   → xlsx files in DOWNLOAD_DIR
+
+    Steps:
+        1. Load missions DataFrame → compare to bronze.mission → detect new missions
+        2. Load locations DataFrame → full-replace bronze.location
+        3. Load all traffic xlsx from DOWNLOAD_DIR → append to bronze.traffic
+
+    Returns dict:
+        new_mission_detected   bool
+        rows_ingested          int   traffic rows appended to bronze.traffic
+        mission_rows_added     int   new rows in bronze.mission
+        location_rows_written  int   rows in bronze.location after refresh
+    """
+    logger.info("=== BRONZE LAYER START ===")
+
+    with get_traffic_engine() as engine:
+        # Step 1 — Missions
+        new_mission_detected, mission_rows_added = ingest_mission(df_missions, engine)
+
+        # Step 2 — Locations
+        location_rows = ingest_location(df_locations, engine)
+
+        # Step 3 — Traffic
+        rows_ingested = ingest_traffic(engine)
+
+    result = {
+        "new_mission_detected":  new_mission_detected,
+        "rows_ingested":         rows_ingested,
+        "mission_rows_added":    mission_rows_added,
+        "location_rows_written": location_rows,
+    }
+    logger.info("=== BRONZE LAYER DONE: %s ===", result)
+    return result
