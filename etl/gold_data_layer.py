@@ -211,7 +211,7 @@ def _check_gold_hourly(df: pd.DataFrame, n_input: int) -> None:
 
 def build_hourly(df_silver: pd.DataFrame) -> pd.DataFrame:
     """
-    Compute gold.hourly from a silver.traffic DataFrame.
+    Compute gold.traffic from a silver.traffic DataFrame.
 
     Groups by (device_id, location_title, datum, stunde, wochentag) and
     applies aggregate_hour() to produce one row per sensor-hour.
@@ -233,78 +233,17 @@ def build_hourly(df_silver: pd.DataFrame) -> pd.DataFrame:
     return hourly
 
 
-def build_by_location(df_hourly: pd.DataFrame) -> pd.DataFrame:
-    """
-    Per-device / location summary aggregated from gold.hourly.
-    One row per (device_id, location_title).
-    """
-    summary = (
-        df_hourly.groupby(["device_id", "location_title"], dropna=False)
-        .agg(
-            total_hours    = ("stunde",         "count"),
-            total_passages = ("count_total",    "sum"),
-            date_start     = ("datum",          "min"),
-            date_end       = ("datum",          "max"),
-            avg_v85        = ("v85_entry",      "mean"),
-            hours_flagged  = ("flag_any",       "sum"),
-            lat            = ("lat",            "first"),
-            lon            = ("lon",            "first"),
-        )
-        .reset_index()
-    )
-    summary["avg_v85"] = summary["avg_v85"].round(1)
-    return summary
-
-
-def build_by_vehicle(df_hourly: pd.DataFrame) -> pd.DataFrame:
-    """
-    Fleet-wide modal share — total passage counts per vehicle class
-    across all locations and time periods. Returns a single-row DataFrame.
-    """
-    totals: dict = {}
-    for col in KLASSE_COUNT_COLS:
-        totals[col] = int(df_hourly[col].sum())
-    totals["count_total"]     = int(df_hourly["count_total"].sum())
-    totals["count_motorised"] = int(df_hourly["count_motorised"].sum())
-    return pd.DataFrame([totals])
-
-
-def build_by_time(df_hourly: pd.DataFrame) -> pd.DataFrame:
-    """
-    Average hourly traffic profile — mean counts and speeds per hour-of-day (0–23).
-    One row per stunde value.
-    """
-    return (
-        df_hourly.groupby("stunde", sort=True)
-        .agg(
-            avg_count_total   = ("count_total",       "mean"),
-            avg_count_pkw     = ("count_pkw",         "mean"),
-            avg_count_lkw     = ("count_lkw",         "mean"),
-            avg_count_lfw     = ("count_lfw",         "mean"),
-            avg_count_krad    = ("count_krad",        "mean"),
-            avg_count_fahrrad = ("count_fahrrad",     "mean"),
-            avg_speed_entry   = ("mean_speed_entry",  "mean"),
-            avg_v85           = ("v85_entry",         "mean"),
-        )
-        .round(1)
-        .reset_index()
-    )
-
-
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def run_gold(engine: Engine) -> dict:
     """
-    Full gold aggregation run — reads silver.traffic, computes all gold tables,
-    writes results to PostgreSQL gold schema.
+    Full gold aggregation run — reads silver.traffic, computes the hourly
+    aggregation, and writes to gold.traffic.
 
-    All gold tables are fully replaced on every run (if_exists="replace").
+    gold.traffic is fully replaced on every run (if_exists="replace").
 
     Returns dict with row counts:
-        rows_hourly       int   rows in gold.hourly
-        rows_by_location  int   rows in gold.by_location
-        rows_by_vehicle   int   rows in gold.by_vehicle (always 1)
-        rows_by_time      int   rows in gold.by_time (up to 24)
+        rows_traffic  int   rows written to gold.traffic
     """
     logger.info("=== GOLD LAYER START ===")
 
@@ -313,37 +252,17 @@ def run_gold(engine: Engine) -> dict:
 
     if df_silver.empty:
         logger.warning("silver.traffic is empty — nothing to aggregate.")
-        return {"rows_hourly": 0, "rows_by_location": 0, "rows_by_vehicle": 0, "rows_by_time": 0}
+        return {"rows_traffic": 0}
 
-    # ── gold.hourly ───────────────────────────────────────────────────────────
-    logger.info("Computing gold.hourly …")
+    # ── gold.traffic ──────────────────────────────────────────────────────────
+    logger.info("Computing gold.traffic …")
     df_hourly = build_hourly(df_silver)
     _check_gold_hourly(df_hourly, n_input=len(df_silver))
     df_hourly["aggregated_at"] = pd.Timestamp.now()
-    df_hourly.to_sql("hourly", engine, schema="gold", if_exists="replace", index=False)
-    logger.info("Wrote %d rows to gold.hourly.", len(df_hourly))
+    df_hourly.to_sql("traffic", engine, schema="gold", if_exists="replace", index=False)
+    logger.info("Wrote %d rows to gold.traffic.", len(df_hourly))
 
-    # ── gold.by_location ──────────────────────────────────────────────────────
-    df_loc = build_by_location(df_hourly)
-    df_loc.to_sql("by_location", engine, schema="gold", if_exists="replace", index=False)
-    logger.info("Wrote %d rows to gold.by_location.", len(df_loc))
-
-    # ── gold.by_vehicle ───────────────────────────────────────────────────────
-    df_veh = build_by_vehicle(df_hourly)
-    df_veh.to_sql("by_vehicle", engine, schema="gold", if_exists="replace", index=False)
-    logger.info("Wrote %d rows to gold.by_vehicle.", len(df_veh))
-
-    # ── gold.by_time ──────────────────────────────────────────────────────────
-    df_time = build_by_time(df_hourly)
-    df_time.to_sql("by_time", engine, schema="gold", if_exists="replace", index=False)
-    logger.info("Wrote %d rows to gold.by_time.", len(df_time))
-
-    result = {
-        "rows_hourly":      len(df_hourly),
-        "rows_by_location": len(df_loc),
-        "rows_by_vehicle":  len(df_veh),
-        "rows_by_time":     len(df_time),
-    }
+    result = {"rows_traffic": len(df_hourly)}
     logger.info("=== GOLD LAYER DONE: %s ===", result)
     return result
 
