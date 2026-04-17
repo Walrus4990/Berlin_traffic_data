@@ -85,6 +85,15 @@ TRAFFIC_RENAME = {
     "Fahrzeugklassen-Bezeichnung":      "vehicle_class_label",
 }
 
+import re
+
+def _parse_msdate(val):
+    """Convert /Date(1646050942957)/ → datetime. Returns NaT if unparseable."""
+    if isinstance(val, str):
+        m = re.search(r'/Date\((-?\d+)\)/', val)
+        if m:
+            return pd.Timestamp(int(m.group(1)), unit="ms")
+    return pd.NaT
 
 def _table_exists(engine: Engine, table: str, schema: str = "bronze") -> bool:
     with engine.connect() as conn:
@@ -171,6 +180,8 @@ def fetch_and_ingest_locations(auth: DDWebAuth, engine: Engine) -> int:
     Returns number of rows written.
     """
     df = fetch_locations(auth).rename(columns=LOCATION_RENAME)
+
+    df["created_at"] = df["created_at"].apply(_parse_msdate)
 
     for col in ("lat", "lon"):
         df[col] = pd.to_numeric(df[col], errors="coerce")

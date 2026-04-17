@@ -10,13 +10,12 @@ logger = logging.getLogger(__name__)
 # ----manage connection to database
 
 @contextmanager
-def get_traffic_engine():
+^X^def get_traffic_engine():
     engine = create_engine(
         f"postgresql+psycopg2://"
         f"{os.getenv('POSTGRES_TRAFFIC_USER')}:"
         f"{os.getenv('POSTGRES_TRAFFIC_PASSWORD')}@"
-        f"{os.getenv('POSTGRES_TRAFFIC_HOST', 'postgres-traffic')}:"
-        f"{os.getenv('POSTGRES_TRAFFIC_PORT', '5432')}/"
+        f"postgres-traffic:5432/"
         f"{os.getenv('POSTGRES_TRAFFIC_DB')}"
     )
     try:
