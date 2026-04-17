@@ -24,7 +24,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 logger = logging.getLogger(__name__)
 
-# ── Cleaning thresholds ───────────────────────────────────────────────────────
+# Cleaning thresholds
 SPEED_MAX_MOTORISED = 100
 SPEED_MIN_MOTORISED = 3
 SPEED_MAX_BICYCLE   = 40
@@ -42,7 +42,7 @@ ACTIVE_SENTINELS = {
 DEDUP_COLS = ["device_id", "datum_parsed", "vehicle_class", "speed_entry", "speed_exit", "length_dm"]
 
 
-# ── Cleaning step functions ───────────────────────────────────────────────────
+# Cleaning step functions
 
 def step_parse_timestamps(df: pd.DataFrame) -> pd.DataFrame:
     """Parse date_raw, extract date/hour/weekday, flag failures."""
@@ -276,7 +276,6 @@ def enrich_with_location(df: pd.DataFrame, df_mission: pd.DataFrame) -> pd.DataF
                  "driving_direction", "lat", "lon", "start_date", "deploy_end"]
     available = ["device_id"] + [c for c in geo_cols if c in df_mission.columns]
 
-    # Tag each original row so we can do a proper anti-join after the expand
     df["_row_id"] = range(len(df))
     df_geo = df.merge(df_mission[available], on="device_id", how="left")
 
@@ -310,7 +309,7 @@ def run_silver(new_mission_detected: bool, engine: Engine) -> dict:
     logger.info("=== SILVER LAYER START (full=%s) ===", new_mission_detected)
     qa: dict = {}
 
-    # ── Load reference tables ─────────────────────────────────────────────────
+    # Load two reference tables
     df_mission  = pd.read_sql("SELECT * FROM bronze.mission",  engine)
     df_location = pd.read_sql("SELECT * FROM bronze.location", engine)
 
@@ -321,7 +320,7 @@ def run_silver(new_mission_detected: bool, engine: Engine) -> dict:
     )
     logger.info("Refreshed silver.active_mission: %d rows.", len(df_active_mission))
 
-    # ── Load unprocessed bronze.traffic rows ──────────────────────────────────
+    # Load unprocessed bronze.traffic rows
     # "Unprocessed" = source_file not yet seen in silver.traffic
     df_bronze = pd.read_sql("SELECT * FROM bronze.traffic", engine)
     try:
@@ -341,7 +340,7 @@ def run_silver(new_mission_detected: bool, engine: Engine) -> dict:
     known_ids = set(df_mission["device_id"].astype(str).unique())
     windows   = _get_deployment_windows(engine)
 
-    # ── Cleaning steps ────────────────────────────────────────────────────────
+    # Cleaning steps
     df = step_parse_timestamps(df)
     qa["unparseable_timestamp"] = int(df["flag_unparseable_timestamp"].sum())
 
@@ -378,12 +377,12 @@ def run_silver(new_mission_detected: bool, engine: Engine) -> dict:
     qa["total_flagged"] = int(df["any_flag"].sum())
     qa["total_clean"]   = int((~df["any_flag"]).sum())
 
-    # ── Geo-enrichment ────────────────────────────────────────────────────────
+    # Geo-enrichment
     # Uses df_active_mission (has lat/lon + deploy_end) not raw bronze.mission
     df = enrich_with_location(df, df_active_mission)
     qa["no_coords"] = int(df["flag_no_coords"].sum())
 
-    # ── Write to silver.traffic ───────────────────────────────────────────────
+    # Write to silver.traffic
     df["processed_at"]  = pd.Timestamp.now()
     df["pipeline_path"] = "full" if new_mission_detected else "reduced"
     df.to_sql("traffic", engine, schema="silver", if_exists="append", index=False)
