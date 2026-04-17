@@ -21,7 +21,7 @@ Returns:     dict with "new_mission_detected" (bool) and row counts
 import logging
 import warnings
 from pathlib import Path
-
+import os
 import pandas as pd
 from sqlalchemy import Engine, text
 
@@ -34,7 +34,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 logger = logging.getLogger(__name__)
 
-DOWNLOAD_DIR = Path("./data/DDWEB_Downloads/") #adjustable - depends on the ingestion output (link to Miiion)
+DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "./data/raw/"))
 
 # ── Column mapping: ingest file field names → bronze schema ──────────────────
 #
@@ -205,7 +205,8 @@ def ingest_traffic(engine: Engine) -> int:
 
     Returns number of rows appended.
     """
-    traffic_files = sorted(DOWNLOAD_DIR.glob("DDweb_VI_Rohdaten_*.xlsx"))
+
+    traffic_files = sorted(DOWNLOAD_DIR.glob("mission_*.xlsx"))
     if not traffic_files:
         logger.warning("No traffic files found in %s", DOWNLOAD_DIR)
         return 0
