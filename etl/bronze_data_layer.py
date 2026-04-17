@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 DOWNLOAD_DIR = Path("./data/DDWEB_Downloads/") #adjustable - depends on the ingestion output (link to Miiion)
 
-# ── Column mapping: ingest file field names → bronze schema ──────────────────
+# Column mapping: ingest file field names → bronze schema
 #
 # The DDweb ingest scripts return the raw portal API field names.
 MISSION_RENAME = {
@@ -133,7 +133,7 @@ def _load_traffic_file(fpath: Path) -> pd.DataFrame: #read the files in the down
     return df
 
 
-# ── Bronze layer functions ────────────────────────────────────────────────────
+# Bronze layer functions
 
 def fetch_and_ingest_missions(auth: DDWebAuth, engine: Engine) -> tuple[bool, int]:
     """
@@ -145,8 +145,8 @@ def fetch_and_ingest_missions(auth: DDWebAuth, engine: Engine) -> tuple[bool, in
     """
     df = fetch_missions(auth).rename(columns=MISSION_RENAME)
     df["device_id"] = df["device_id"].astype(str).str.strip()
-    for col in ("start_date", "end_date"):
-        df[col] = pd.to_datetime(df[col], errors="coerce")
+    for col in ("created_at", "start_date", "end_date"):
+        df[col] = df[col].apply(_parse_msdate)
     df["ingested_at"] = pd.Timestamp.now()
 
     existing_keys = _get_existing_mission_keys(engine)
