@@ -12,12 +12,13 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 import re
 import requests
+import os
 from etl.ddweb_auth import DDWebAuth
 
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://ddweb.topo-web.com"
-DOWNLOAD_DIR = Path("./data/raw/")
+DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "./data/raw/"))
 
 ANALYSIS_MODEL = 6
 

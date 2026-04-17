@@ -5,6 +5,7 @@ Weekly orchestration: ingest → bronze → silver → gold → Superset refresh
 from airflow import DAG
 from airflow.operators.python import PythonOperator, BranchPythonOperator
 from airflow.providers.postgres.operators.postgres import PostgresOperator
+from airflow.operators.empty import EmptyOperator
 from airflow.utils.dates import days_ago
 from datetime import timedelta
 import logging
@@ -13,74 +14,88 @@ logger = logging.getLogger(__name__)
 
 # ── Default args ──────────────────────────────────────────────────────────────
 default_args = {
-    "owner": "lucia",
+    "owner": "berlin",
     "retries": 1,
     "retry_delay": timedelta(minutes=5),
 }
 
 # ── Task functions ────────────────────────────────────────────────────────────
 
-def ingest_missions_and_locations(**kwargs):
-    """Fetch missions and locations from DDWeb → bronze tables"""
+def fetch_and_load_missions(**kwargs):
     from etl.ddweb_auth import DDWebAuth
-    from etl.ddweb_ingest import fetch_missions, fetch_locations
-    import psycopg2, os
+    from etl.bronze_data_layer import fetch_and_ingest_missions
+    from utils.db import get_traffic_engine
 
     auth = DDWebAuth()
     auth.ensure_authenticated()
 
-    missions_df  = fetch_missions(auth)
-    locations_df = fetch_locations(auth)
+    with get_traffic_engine() as engine:
+        new_mission_detected, rows_added = fetch_and_ingest_missions(auth, engine)
 
-    # Push to XCom for next task
-    kwargs["ti"].xcom_push(key="missions_count",  value=len(missions_df))
-    kwargs["ti"].xcom_push(key="locations_count", value=len(locations_df))
-    logger.info(f"Fetched {len(missions_df)} missions, {len(locations_df)} locations")
+    #store a short value in Airflow: True = a new mission ID was found, run the full update path. False = no change, run the reduced path
+    kwargs["ti"].xcom_push(key="new_mission_detected", value=new_mission_detected)
+    logger.info(f"new_mission_detected={new_mission_detected}, rows_added={rows_added}")
 
 
-def check_new_missions(**kwargs):
-    """Compare fetched missions to bronze.deployment → branch decision"""
-    import psycopg2
+t_missions = PythonOperator(
+    task_id="fetch_and_load_missions",
+    python_callable=fetch_and_load_missions,
+)
 
-    conn = psycopg2.connect(
-        host="postgres-traffic", dbname="berlin_traffic",
-        user="traffic", password="traffic"
+# ------ If logic in case new mission go to location otherwise skip
+def branch_on_new_mission(**kwargs):
+    new_mission = kwargs["ti"].xcom_pull(   #pulls the short True/False value from previsous function
+        task_ids="fetch_and_load_missions",
+        key="new_mission_detected"
     )
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM bronze.deployment")
-    existing = cur.fetchone()[0]
-    conn.close()
+    if new_mission:
+        return "fetch_and_load_locations"
+    return "skip_locations"
 
-    if existing == 0:
-        logger.info("No existing missions — full update path")
-        return "full_update"
-    else:
-        logger.info("Missions exist — checking for new ones")
-        return "reduced_update"
+t_branch = BranchPythonOperator(
+    task_id="branch_on_new_mission",
+    python_callable=branch_on_new_mission,
+)
 
-
-def full_update(**kwargs):
-    """New mission detected: update bronze, silver_active_mission, run full clean"""
-    logger.info("Running FULL update pipeline...")
-    # TODO: implement full clean using etl/transform.py
-
-
-def reduced_update(**kwargs):
-    """No new mission: lookup location, run reduced clean"""
-    logger.info("Running REDUCED update pipeline...")
-    # TODO: implement reduced clean using etl/transform.py
-
-
-def ingest_traffic_files(**kwargs):
-    """Download weekly traffic Excel files from DDWeb → bronze.traffic"""
+# ----- load locations if new missions
+def fetch_and_load_locations(**kwargs):
     from etl.ddweb_auth import DDWebAuth
-    from etl.ddweb_ingest import fetch_missions
-    from etl.ddweb_ingest_traffic import complete_download
+    from etl.bronze_data_layer import fetch_and_ingest_locations
+    from utils.db import get_traffic_engine
 
     auth = DDWebAuth()
-    missions_df = fetch_missions(auth)
-    complete_download(auth, missions_df)
-    logger.info("Traffic files downloaded")
+    auth.ensure_authenticated()
+
+    with get_traffic_engine() as engine:
+        rows = fetch_and_ingest_locations(auth, engine)
+    logger.info(f"Locations loaded: {rows} rows")
+
+t_locations = PythonOperator(
+    task_id="fetch_and_load_locations",
+    python_callable=fetch_and_load_locations,
+)
+
+t_skip_locations = EmptyOperator(
+    task_id="skip_locations",
+)
+
+def load_bronze_traffic(**kwargs):
+    from etl.bronze_data_layer import ingest_traffic
+    from utils.db import get_traffic_engine
+
+    with get_traffic_engine() as engine:
+        rows = ingest_traffic(engine)
+    logger.info(f"Traffic rows appended: {rows}")
+
+t_ingest_traffic = PythonOperator(
+    task_id="ingest_traffic_files",
+    python_callable=load_bronze_traffic,
+    trigger_rule="none_failed_min_one_success",
+)
+
+
+
+
 
 
 def refresh_superset(**kwargs):
@@ -119,31 +134,6 @@ with DAG(
     tags=["berlin", "traffic", "superset"],
 ) as dag:
 
-    t_ingest_ref = PythonOperator(
-        task_id="ingest_missions_locations",
-        python_callable=ingest_missions_and_locations,
-    )
-
-    t_branch = BranchPythonOperator(
-        task_id="check_new_missions",
-        python_callable=check_new_missions,
-    )
-
-    t_full = PythonOperator(
-        task_id="full_update",
-        python_callable=full_update,
-    )
-
-    t_reduced = PythonOperator(
-        task_id="reduced_update",
-        python_callable=reduced_update,
-    )
-
-    t_ingest_traffic = PythonOperator(
-        task_id="ingest_traffic_files",
-        python_callable=ingest_traffic_files,
-        trigger_rule="none_failed_min_one_success",
-    )
 
     t_gold_location = PostgresOperator(
         task_id="refresh_gold_by_location",
@@ -170,8 +160,8 @@ with DAG(
     )
 
     # ── Dependencies ──────────────────────────────────────────────────────────
-    t_ingest_ref >> t_branch
-    t_branch >> [t_full, t_reduced]
-    [t_full, t_reduced] >> t_ingest_traffic
+    t_missions >> t_branch
+    t_branch >> [t_locations, t_skip_locations]
+    [t_locations, t_skip_locations] >> t_ingest_traffic
     t_ingest_traffic >> [t_gold_location, t_gold_vehicle, t_gold_time]
     [t_gold_location, t_gold_vehicle, t_gold_time] >> t_superset
