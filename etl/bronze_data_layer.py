@@ -18,12 +18,15 @@ Entry point: run_bronze(df_missions, df_locations)
 Returns:     dict with "new_mission_detected" (bool) and row counts
 """
 
+from __future__ import annotations
 import logging
 import warnings
 from pathlib import Path
 import os
 import pandas as pd
-from sqlalchemy import Engine, text
+from sqlalchemy.engine import Engine
+from sqlalchemy import text
+from typing import Set, Tuple
 
 from utils.db import get_traffic_engine, save
 from etl.ddweb_auth import DDWebAuth
@@ -108,7 +111,8 @@ def _table_exists(engine: Engine, table: str, schema: str = "bronze") -> bool:
         ).scalar()
 
 
-def _get_existing_mission_keys(engine: Engine) -> set[tuple]:
+def _get_existing_mission_keys(engine: Engine) -> Set[Tuple]:
+
     """Return (device_id, start_date) pairs already stored in bronze.mission."""
     if not _table_exists(engine, "mission"):
         return set()

@@ -37,11 +37,6 @@ def fetch_and_load_missions(**kwargs):
     logger.info(f"new_mission_detected={new_mission_detected}, rows_added={rows_added}")
 
 
-t_missions = PythonOperator(
-    task_id="fetch_and_load_missions",
-    python_callable=fetch_and_load_missions,
-)
-
 # ------ If logic in case new mission go to location otherwise skip
 def branch_on_new_mission(**kwargs):
     new_mission = kwargs["ti"].xcom_pull(   #pulls the short True/False value from previsous function
@@ -52,10 +47,6 @@ def branch_on_new_mission(**kwargs):
         return "fetch_and_load_locations"
     return "skip_locations"
 
-t_branch = BranchPythonOperator(
-    task_id="branch_on_new_mission",
-    python_callable=branch_on_new_mission,
-)
 
 # ----- load locations if new missions
 def fetch_and_load_locations(**kwargs):
@@ -70,14 +61,6 @@ def fetch_and_load_locations(**kwargs):
         rows = fetch_and_ingest_locations(auth, engine)
     logger.info(f"Locations loaded: {rows} rows")
 
-t_locations = PythonOperator(
-    task_id="fetch_and_load_locations",
-    python_callable=fetch_and_load_locations,
-)
-
-t_skip_locations = EmptyOperator(
-    task_id="skip_locations",
-)
 
 def load_bronze_traffic(**kwargs):
     from etl.bronze_data_layer import ingest_traffic
@@ -86,14 +69,6 @@ def load_bronze_traffic(**kwargs):
     with get_traffic_engine() as engine:
         rows = ingest_traffic(engine)
     logger.info(f"Traffic rows appended: {rows}")
-
-t_ingest_traffic = PythonOperator(
-    task_id="ingest_traffic_files",
-    python_callable=load_bronze_traffic,
-    trigger_rule="none_failed_min_one_success",
-)
-
-
 
 
 
@@ -134,6 +109,30 @@ with DAG(
     tags=["berlin", "traffic", "superset"],
 ) as dag:
 
+    t_missions = PythonOperator(
+        task_id="fetch_and_load_missions",
+        python_callable=fetch_and_load_missions,
+    )
+
+    t_branch = BranchPythonOperator(
+        task_id="branch_on_new_mission",
+        python_callable=branch_on_new_mission,
+    )
+
+    t_locations = PythonOperator(
+        task_id="fetch_and_load_locations",
+        python_callable=fetch_and_load_locations,
+    )
+
+    t_skip_locations = EmptyOperator(
+        task_id="skip_locations",
+    )
+
+    t_ingest_traffic = PythonOperator(
+        task_id="ingest_traffic_files",
+        python_callable=load_bronze_traffic,
+        trigger_rule="none_failed_min_one_success",
+    )
 
     t_gold_location = PostgresOperator(
         task_id="refresh_gold_by_location",

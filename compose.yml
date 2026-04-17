@@ -96,12 +96,15 @@ services:
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://$POSTGRES_AIRFLOW_USER:$POSTGRES_AIRFLOW_PASSWORD@postgres-airflow:5432/$POSTGRES_AIRFLOW_DB
       - AIRFLOW__CORE__LOAD_EXAMPLES=false
       - AIRFLOW_CONN_POSTGRES_TRAFFIC=postgresql://traffic:traffic@postgres-traffic:5432/berlin_traffic
+      - AIRFLOW__WEBSERVER__SECRET_KEY=berlin_traffic_secret
       - POSTGRES_TRAFFIC_HOST=postgres-traffic
       - POSTGRES_TRAFFIC_PORT=5432
       - POSTGRES_TRAFFIC_USER=${POSTGRES_TRAFFIC_USER}
       - POSTGRES_TRAFFIC_PASSWORD=${POSTGRES_TRAFFIC_PASSWORD}
       - POSTGRES_TRAFFIC_DB=${POSTGRES_TRAFFIC_DB}
       - PYTHONPATH=/opt/airflow
+      - DDWEB_EMAIL=${DDWEB_EMAIL}
+      - DDWEB_PASSWORD=${DDWEB_PASSWORD}
     command: scheduler
     volumes:
       - ./dags/:/opt/airflow/dags/
@@ -126,12 +129,15 @@ services:
       - AIRFLOW__DEBUG__FAIL_FAST=true
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://$POSTGRES_AIRFLOW_USER:$POSTGRES_AIRFLOW_PASSWORD@postgres-airflow:5432/$POSTGRES_AIRFLOW_DB
       - AIRFLOW_CONN_POSTGRES_TRAFFIC=postgresql://traffic:traffic@postgres-traffic:5432/berlin_traffic
+      - AIRFLOW__WEBSERVER__SECRET_KEY=berlin_traffic_secret
       - POSTGRES_TRAFFIC_HOST=postgres-traffic
       - POSTGRES_TRAFFIC_PORT=5432
       - POSTGRES_TRAFFIC_USER=${POSTGRES_TRAFFIC_USER}
       - POSTGRES_TRAFFIC_PASSWORD=${POSTGRES_TRAFFIC_PASSWORD}
       - POSTGRES_TRAFFIC_DB=${POSTGRES_TRAFFIC_DB}
       - PYTHONPATH=/opt/airflow
+      - DDWEB_EMAIL=${DDWEB_EMAIL}
+      - DDWEB_PASSWORD=${DDWEB_PASSWORD}
     command: webserver
     volumes:
       - ./dags/:/opt/airflow/dags/
