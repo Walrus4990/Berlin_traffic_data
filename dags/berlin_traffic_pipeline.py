@@ -23,7 +23,7 @@ default_args = {
 def ingest_missions_and_locations(**kwargs):
     """Fetch missions and locations from DDWeb → bronze tables"""
     from etl.ddweb_auth import DDWebAuth
-    from etl.ddweb_ingest import fetch_missions, fetch_locations
+    from etl.ddweb_ingest_ref import fetch_missions, fetch_locations
     import psycopg2, os
 
     auth = DDWebAuth()
@@ -39,7 +39,7 @@ def ingest_missions_and_locations(**kwargs):
 
 
 def check_new_missions(**kwargs):
-    """Compare fetched missions to bronze.deployment → branch decision"""
+    """Compare fetched missions to bronze.mission → branch decision"""
     import psycopg2
 
     conn = psycopg2.connect(
@@ -47,7 +47,7 @@ def check_new_missions(**kwargs):
         user="traffic", password="traffic"
     )
     cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM bronze.deployment")
+    cur.execute("SELECT COUNT(*) FROM bronze.mission")
     existing = cur.fetchone()[0]
     conn.close()
 
@@ -74,14 +74,46 @@ def reduced_update(**kwargs):
 def ingest_traffic_files(**kwargs):
     """Download weekly traffic Excel files from DDWeb → bronze.traffic"""
     from etl.ddweb_auth import DDWebAuth
-    from etl.ddweb_ingest import fetch_missions
+    from etl.ddweb_ingest_ref import fetch_missions
     from etl.ddweb_ingest_traffic import complete_download
 
     auth = DDWebAuth()
     missions_df = fetch_missions(auth)
+
+    # TEST MODE: only the first mission
+    missions_df = missions_df.head(1)
+    logger.info(f"TEST MODE: downloading only {len(missions_df)} mission(s)")
+    
     complete_download(auth, missions_df)
     logger.info("Traffic files downloaded")
 
+def run_bronze_layer(**kwargs):
+    """Load missions, locations and traffic files into bronze tables"""
+    from etl.bronze_data_layer import run_bronze
+    result = run_bronze()
+    logger.info(f"Bronze layer result: {result}")
+    kwargs["ti"].xcom_push(key="new_mission_detected",
+                           value=result["new_mission_detected"])
+
+def run_silver_layer(**kwargs):
+    """Clean and enrich bronze data into silver tables"""
+    from etl.silver_data_layer import run_silver
+    from utils.db import get_traffic_engine
+    new_mission = kwargs["ti"].xcom_pull(
+        key="new_mission_detected",
+        task_ids="run_bronze_layer"
+    )
+    with get_traffic_engine() as engine:
+        result = run_silver(bool(new_mission), engine)
+    logger.info(f"Silver layer result: {result}")
+
+def run_gold_layer(**kwargs):
+    """Run gold aggregation using Monica's gold_data_layer.py"""
+    from etl.gold_data_layer import run_gold
+    from utils.db import get_traffic_engine
+    with get_traffic_engine() as engine:
+        result = run_gold(engine)
+    logger.info(f"Gold layer result: {result}")
 
 def refresh_superset(**kwargs):
     """Trigger Superset dataset cache refresh via API"""
@@ -143,24 +175,23 @@ with DAG(
         task_id="ingest_traffic_files",
         python_callable=ingest_traffic_files,
         trigger_rule="none_failed_min_one_success",
+        execution_timeout=timedelta(hours=2),
     )
 
-    t_gold_location = PostgresOperator(
-        task_id="refresh_gold_by_location",
-        postgres_conn_id="postgres_traffic",
-        sql="sql/tempelhof_queries/06_ds_map.sql",
+    t_bronze = PythonOperator(
+        task_id="run_bronze_layer",
+        python_callable=run_bronze_layer,
     )
 
-    t_gold_vehicle = PostgresOperator(
-        task_id="refresh_gold_by_vehicle",
-        postgres_conn_id="postgres_traffic",
-        sql="sql/tempelhof_queries/01_ds_modal_share.sql",
+    t_silver = PythonOperator(
+        task_id="run_silver_layer",
+        python_callable=run_silver_layer,
     )
 
-    t_gold_time = PostgresOperator(
-        task_id="refresh_gold_by_time",
-        postgres_conn_id="postgres_traffic",
-        sql="sql/tempelhof_queries/03_ds_peaks.sql",
+    t_gold = PythonOperator(
+        task_id="run_gold_layer",
+        python_callable=run_gold_layer,
+        trigger_rule="none_failed_min_one_success",
     )
 
     t_superset = PythonOperator(
@@ -173,5 +204,4 @@ with DAG(
     t_ingest_ref >> t_branch
     t_branch >> [t_full, t_reduced]
     [t_full, t_reduced] >> t_ingest_traffic
-    t_ingest_traffic >> [t_gold_location, t_gold_vehicle, t_gold_time]
-    [t_gold_location, t_gold_vehicle, t_gold_time] >> t_superset
+    t_ingest_traffic >> t_bronze >> t_silver >> t_gold >> t_superset
