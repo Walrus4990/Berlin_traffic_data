@@ -81,15 +81,15 @@ def aggregate_hour(grp: pd.DataFrame) -> pd.Series:
         if len(v85_speeds) >= V85_MIN_SAMPLE else None
     )
 
-    # Location coordinates (first non-null in group)
+    # Location coordinates (first non-null values found in the group)
     result["latitude"]  = float(grp["lat"].dropna().iloc[0]) if grp["lat"].notna().any() else None
     result["longitude"] = float(grp["lon"].dropna().iloc[0]) if grp["lon"].notna().any() else None
     return pd.Series(result)
 
 
 def _enforce_dtypes(df: pd.DataFrame) -> pd.DataFrame:
-    """after groupby().apply(), column types can come back as object (generic Python objects)
-    instead of proper numeric types, especially when a group contains None/NaN values."""
+    """suggested by LLM: adding this function here to fix a common pandas issue
+    where groupby().apply() returns numeric-looking columns as object. """
     for col in INT_COLS:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
@@ -105,14 +105,15 @@ def _check_gold_hourly(df: pd.DataFrame, n_input: int) -> None:
     """Run post-aggregation checks. Raises AssertionError on hard failures."""
     checks_passed = 0
 
-    # 1. No duplicate (geraet_id, datum, stunde) keys
-    dup_keys = df.duplicated(subset=["geraet_id", "datum", "stunde"], keep=False)
+    # 1. No duplicate keys (geraet_id, standort, datum, stunde)
+    gold_key = ["geraet_id", "standort", "datum", "stunde"]
+    dup_keys = df.duplicated(subset=gold_key, keep=False)
     if dup_keys.any():
         raise AssertionError(
             f"{dup_keys.sum()} rows in gold.traffic share the same "
-            f"(geraet_id, datum, stunde) key"
+            f"({', '.join(gold_key)}) key"
         )
-    logger.info("Check 1: No duplicate (geraet_id, datum, stunde) keys.")
+    logger.info("Check 1: No duplicate (%s) keys.", ", ".join(gold_key))
     checks_passed += 1
 
     # 2. stunde values are 0–23
@@ -122,7 +123,7 @@ def _check_gold_hourly(df: pd.DataFrame, n_input: int) -> None:
     logger.info("Check 2: All stunde values are 0–23.")
     checks_passed += 1
 
-    # 3. Gold row count ≤ input row count
+    # 3. Gold row count ≤ input silver row count
     assert len(df) <= n_input, (
         f"gold.traffic has more rows ({len(df)}) than silver.traffic input ({n_input})"
     )
@@ -164,7 +165,7 @@ def build_hourly(df_silver: pd.DataFrame) -> pd.DataFrame:
     for cls in ["pkw", "fahrrad", "lkw", "krad"]:
         hourly[f"modal_share_{cls}"] = (hourly[cls] / total_all * 100).round(1)
 
-    # Reorder columns to match final table spec
+    # Reorder columns to match the target table
     col_order = [
         "datum", "datum_iso", "stunde", "geraet_id", "standort",
         "latitude", "longitude",
@@ -177,12 +178,11 @@ def build_hourly(df_silver: pd.DataFrame) -> pd.DataFrame:
     return hourly
 
 
-# run the main function
+# Execution entry point
 def run_gold(engine: Engine) -> dict:
     """
     Full gold aggregation run: reads silver.traffic, computes the hourly aggregation, and writes to gold.traffic.
-    Returns dict with row counts:
-        rows_traffic  int   rows written to gold.traffic
+    Write the final table to gold.traffic.
     """
     df_silver = pd.read_sql("SELECT * FROM silver.traffic", engine)
     logger.info("Loaded %d rows from silver.traffic.", len(df_silver))
