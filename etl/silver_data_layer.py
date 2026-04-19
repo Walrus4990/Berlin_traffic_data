@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 silver.py — Silver layer transformation
 =========================================
@@ -18,7 +19,8 @@ import warnings
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import Engine, text
+from sqlalchemy.engine import Engine
+from sqlalchemy import text
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
