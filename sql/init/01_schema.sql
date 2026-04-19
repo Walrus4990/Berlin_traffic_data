@@ -159,3 +159,27 @@ CREATE TABLE IF NOT EXISTS gold.traffic (
 --     neue_deployments    BOOLEAN,
 --     notes               TEXT
 -- );
+
+-- Compatibility view for Superset dashboard
+CREATE OR REPLACE VIEW public.traffic_berlin AS
+SELECT
+  datum,
+  datum_iso::DATE AS datum_iso,
+  stunde,
+  geraet_id,
+  standort,
+  latitude,
+  longitude,
+  COALESCE(kfz, 0) AS kfz,
+  COALESCE(pkw, 0) AS pkw,
+  COALESCE(lkw, 0) AS lkw,
+  COALESCE(lfw, 0) AS lfw,
+  COALESCE(krad, 0) AS krad,
+  COALESCE(fahrrad, 0) AS fahrrad,
+  v_kfz, v_pkw, v_lkw, v85,
+  COALESCE(modal_share_pkw, 0) AS modal_share_pkw,
+  COALESCE(modal_share_fahrrad, 0) AS modal_share_fahrrad,
+  COALESCE(modal_share_lkw, 0) AS modal_share_lkw,
+  COALESCE(modal_share_krad, 0) AS modal_share_krad
+FROM gold.traffic
+WHERE datum_iso IS NOT NULL AND datum_iso != 'nan';
