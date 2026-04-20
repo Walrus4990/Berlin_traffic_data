@@ -38,15 +38,7 @@ from etl.silver_data_layer import (
     step_flag_unknown_device,
     step_parse_timestamps,
 )
-from etl.gold_data_layer import (
-    KLASSE_COUNT_COLS,
-    V85_MIN_SAMPLE,
-    build_by_location,
-    build_by_time,
-    build_by_vehicle,
-    build_hourly,
-    _check_gold_hourly,
-)
+from etl.gold_data_layer import build_hourly, _check_gold_hourly
 
 DATA_DIR = ROOT / "data" / "DDWEB_Downloads"
 
@@ -224,7 +216,7 @@ if __name__ == "__main__":
     print(f"\nRunning post-aggregation checks …")
     try:
         _check_gold_hourly(df_hourly, n_input=len(df_silver))
-        print("  All 5 checks passed.")
+        print("  All 3 checks passed.")
     except AssertionError as e:
         print(f"  CHECK FAILED: {e}")
 
@@ -236,49 +228,64 @@ if __name__ == "__main__":
 
     # Summary stats
     print(f"\nDate range:        {df_hourly['datum'].min()} → {df_hourly['datum'].max()}")
-    print(f"Unique devices:    {df_hourly['device_id'].nunique()}")
-    print(f"Unique locations:  {df_hourly['location_title'].nunique()}")
-    print(f"Hours with flag:   {df_hourly['flag_any'].sum():,}  ({df_hourly['flag_any'].mean()*100:.1f}%)")
-    print(f"Hours with V85:    {df_hourly['v85_entry'].notna().sum():,}  "
-          f"({df_hourly['v85_entry'].notna().mean()*100:.1f}%)")
-    print(f"Hours thin sample: {df_hourly['thin_v85_sample'].sum():,}")
-    v85_valid = df_hourly['v85_entry'].dropna()
+    print(f"Unique devices:    {df_hourly['geraet_id'].nunique()}")
+    print(f"Unique locations:  {df_hourly['standort'].nunique()}")
+    gold_key = ["geraet_id", "standort", "datum", "stunde"]
+    dup_count = int(df_hourly.duplicated(subset=gold_key, keep=False).sum())
+    print(f"Duplicate gold keys: {dup_count:,}")
+    print(f"Hours with V85:    {df_hourly['v85'].notna().sum():,}  "
+          f"({df_hourly['v85'].notna().mean()*100:.1f}%)")
+    v85_valid = df_hourly["v85"].dropna()
     if len(v85_valid):
         print(f"V85 mean:          {v85_valid.mean():.1f} km/h  "
               f"(min {v85_valid.min():.1f}, max {v85_valid.max():.1f})")
 
     # Vehicle class breakdown (totals)
     print("\nVehicle class totals across all hours:")
-    total = df_hourly["count_total"].sum()
-    for col in KLASSE_COUNT_COLS:
+    total = df_hourly["kfz"].sum() + df_hourly["fahrrad"].sum()
+    class_cols = ["kfz", "pkw", "lkw", "lfw", "krad", "fahrrad"]
+    for col in class_cols:
         n   = df_hourly[col].sum()
         pct = n / total * 100 if total else 0
         print(f"  {col:<22}  {n:>10,}  ({pct:.1f}%)")
 
-    # ── gold.by_location ──────────────────────────────────────────────────────
-    _section("gold.by_location  ←  build_by_location(gold.hourly)")
-    df_loc = build_by_location(df_hourly)
+    # Top slices for quick preview
+    _section("Top Device Hours")
+    top_hours = df_hourly.sort_values(["kfz", "fahrrad"], ascending=False).head(10)
+    _show(top_hours, n=10)
+
+    _section("Top Locations")
+    df_loc = (
+        df_hourly.groupby(["geraet_id", "standort"], dropna=False)
+        .agg(
+            total_kfz=("kfz", "sum"),
+            total_fahrrad=("fahrrad", "sum"),
+            avg_v_kfz=("v_kfz", "mean"),
+            hours=("stunde", "count"),
+        )
+        .reset_index()
+        .sort_values(["total_kfz", "total_fahrrad"], ascending=False)
+    )
     _show(df_loc, n=10)
 
-    # ── gold.by_vehicle ───────────────────────────────────────────────────────
-    _section("gold.by_vehicle  ←  build_by_vehicle(gold.hourly)")
-    df_veh = build_by_vehicle(df_hourly)
-    print(f"\nShape: {df_veh.shape[0]} rows × {df_veh.shape[1]} cols  (fleet-wide totals)")
-    print(df_veh.T.to_string(header=False))
-
-    # ── gold.by_time ──────────────────────────────────────────────────────────
-    _section("gold.by_time  ←  build_by_time(gold.hourly)")
-    df_time = build_by_time(df_hourly)
-    print(f"\nShape: {df_time.shape[0]} rows × {df_time.shape[1]} cols  (hour 0–23 profile)")
+    _section("Hourly Profile")
+    df_time = (
+        df_hourly.groupby("stunde", dropna=False)
+        .agg(
+            total_kfz=("kfz", "sum"),
+            total_fahrrad=("fahrrad", "sum"),
+            avg_v_kfz=("v_kfz", "mean"),
+            avg_v85=("v85", "mean"),
+        )
+        .reset_index()
+        .sort_values("stunde")
+    )
     _show(df_time, n=24)
 
     # ── run_gold() return value ───────────────────────────────────────────────
     _section("run_gold() return value")
     result = {
-        "rows_hourly":      len(df_hourly),
-        "rows_by_location": len(df_loc),
-        "rows_by_vehicle":  len(df_veh),
-        "rows_by_time":     len(df_time),
+        "rows_traffic": len(df_hourly),
     }
     print()
     for k, v in result.items():

@@ -1,3 +1,4 @@
+from __future__ import annotations
 # INGEST TRAFFIC SENSOR DATA
     # following functions:
     #note: - private '_name' only to be used for this ingest purpose
@@ -9,7 +10,7 @@ import logging
 import calendar
 from pathlib import Path
 from datetime import datetime
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo #check if this crashes the DAG
 
 import requests
 import os
@@ -19,7 +20,7 @@ from utils.date import parse_date
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://ddweb.topo-web.com"
-DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "./data/raw/"))
+DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "./data/raw/")) #check if teh ref to data/ rather than data/raw is oK
 
 ANALYSIS_MODEL = 6
 
