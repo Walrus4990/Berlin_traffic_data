@@ -19,15 +19,19 @@ Entry point: run_bronze(df_missions, df_locations)
 Returns:     dict with "new_mission_detected" (bool) and row counts
 """
 
+from __future__ import annotations
 import logging
 import warnings
 from pathlib import Path
-
+import os
 import pandas as pd
 from sqlalchemy.engine import Engine
 from sqlalchemy import text
+from typing import Set, Tuple
+import re
 
 from utils.db import get_traffic_engine, save
+from utils.date import parse_date
 from etl.ddweb_auth import DDWebAuth
 from etl.ddweb_ingest_ref import fetch_missions
 from etl.ddweb_ingest_ref import fetch_locations
@@ -36,7 +40,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 logger = logging.getLogger(__name__)
 
-DOWNLOAD_DIR = Path("/opt/airflow/data/DDWEB_Downloads/") #adjustable - depends on the ingestion output (link to Miiion)
+DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "./data/raw/")) #check if there now is a clash 
 
 # Column mapping: ingest file field names → bronze schema
 #
@@ -87,15 +91,15 @@ TRAFFIC_RENAME = {
     "Fahrzeugklassen-Bezeichnung":      "vehicle_class_label",
 }
 
-import re
 
-def _parse_msdate(val):
-    """Convert /Date(1646050942957)/ → datetime. Returns NaT if unparseable."""
-    if isinstance(val, str):
-        m = re.search(r'/Date\((-?\d+)\)/', val)
-        if m:
-            return pd.Timestamp(int(m.group(1)), unit="ms")
-    return pd.NaT
+
+# def _parse_msdate(val):
+#     """Convert /Date(1646050942957)/ → datetime. Returns NaT if unparseable."""
+#     if isinstance(val, str):
+#         m = re.search(r'/Date\((-?\d+)\)/', val)
+#         if m:
+#             return pd.Timestamp(int(m.group(1)), unit="ms")
+#     return pd.NaT
 
 def _table_exists(engine: Engine, table: str, schema: str = "bronze") -> bool:
     with engine.connect() as conn:
@@ -110,7 +114,8 @@ def _table_exists(engine: Engine, table: str, schema: str = "bronze") -> bool:
         ).scalar()
 
 
-def _get_existing_mission_keys(engine: Engine) -> set[tuple]:
+def _get_existing_mission_keys(engine: Engine) -> Set[Tuple]:
+
     """Return (device_id, start_date) pairs already stored in bronze.mission."""
     if not _table_exists(engine, "mission"):
         return set()
@@ -148,7 +153,8 @@ def fetch_and_ingest_missions(auth: DDWebAuth, engine: Engine) -> tuple[bool, in
     df = fetch_missions(auth).rename(columns=MISSION_RENAME)
     df["device_id"] = df["device_id"].astype(str).str.strip()
     for col in ("created_at", "start_date", "end_date"):
-        df[col] = df[col].apply(_parse_msdate)
+        df[col] = df[col].apply(parse_date)
+
     df["ingested_at"] = pd.Timestamp.now()
 
     existing_keys = _get_existing_mission_keys(engine)
@@ -183,7 +189,7 @@ def fetch_and_ingest_locations(auth: DDWebAuth, engine: Engine) -> int:
     """
     df = fetch_locations(auth).rename(columns=LOCATION_RENAME)
 
-    df["created_at"] = df["created_at"].apply(_parse_msdate)
+    df["created_at"] = df["created_at"].apply(parse_date)
 
     for col in ("lat", "lon"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -207,7 +213,8 @@ def ingest_traffic(engine: Engine) -> int:
 
     Returns number of rows appended.
     """
-    traffic_files = sorted(DOWNLOAD_DIR.glob("DDweb_VI_Rohdaten_*.xlsx"))
+
+    traffic_files = sorted(DOWNLOAD_DIR.glob("mission_*.xlsx"))
     if not traffic_files:
         logger.warning("No traffic files found in %s", DOWNLOAD_DIR)
         return 0
