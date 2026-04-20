@@ -1,3 +1,4 @@
+from __future__ import annotations
 # INGEST TRAFFIC SENSOR DATA
     # following functions:
     # 1. Helper function (date parsing, chunking) - private '_name' only to be used for this ingest purpose
@@ -9,7 +10,10 @@ import logging
 import calendar
 from pathlib import Path
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
 import re
 import requests
 from etl.ddweb_auth import DDWebAuth

@@ -17,7 +17,7 @@ import logging
 import warnings
 
 import pandas as pd
-from sqlalchemy import Engine
+from sqlalchemy.engine import Engine
 
 from utils.db import get_traffic_engine
 
