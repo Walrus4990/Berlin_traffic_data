@@ -27,8 +27,10 @@ import pandas as pd
 from sqlalchemy.engine import Engine
 from sqlalchemy import text
 from typing import Set, Tuple
+import re
 
 from utils.db import get_traffic_engine, save
+from utils.date import parse_date
 from etl.ddweb_auth import DDWebAuth
 from etl.ddweb_ingest_ref import fetch_missions
 from etl.ddweb_ingest_ref import fetch_locations
@@ -88,15 +90,15 @@ TRAFFIC_RENAME = {
     "Fahrzeugklassen-Bezeichnung":      "vehicle_class_label",
 }
 
-import re
 
-def _parse_msdate(val):
-    """Convert /Date(1646050942957)/ → datetime. Returns NaT if unparseable."""
-    if isinstance(val, str):
-        m = re.search(r'/Date\((-?\d+)\)/', val)
-        if m:
-            return pd.Timestamp(int(m.group(1)), unit="ms")
-    return pd.NaT
+
+# def _parse_msdate(val):
+#     """Convert /Date(1646050942957)/ → datetime. Returns NaT if unparseable."""
+#     if isinstance(val, str):
+#         m = re.search(r'/Date\((-?\d+)\)/', val)
+#         if m:
+#             return pd.Timestamp(int(m.group(1)), unit="ms")
+#     return pd.NaT
 
 def _table_exists(engine: Engine, table: str, schema: str = "bronze") -> bool:
     with engine.connect() as conn:
@@ -149,8 +151,9 @@ def fetch_and_ingest_missions(auth: DDWebAuth, engine: Engine) -> tuple[bool, in
     """
     df = fetch_missions(auth).rename(columns=MISSION_RENAME)
     df["device_id"] = df["device_id"].astype(str).str.strip()
-    for col in ("start_date", "end_date"):
-        df[col] = pd.to_datetime(df[col], errors="coerce")
+    for col in ("created_at", "start_date", "end_date"):
+        df[col] = df[col].apply(parse_date)
+
     df["ingested_at"] = pd.Timestamp.now()
 
     existing_keys = _get_existing_mission_keys(engine)
@@ -185,7 +188,7 @@ def fetch_and_ingest_locations(auth: DDWebAuth, engine: Engine) -> int:
     """
     df = fetch_locations(auth).rename(columns=LOCATION_RENAME)
 
-    df["created_at"] = df["created_at"].apply(_parse_msdate)
+    df["created_at"] = df["created_at"].apply(parse_date)
 
     for col in ("lat", "lon"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
