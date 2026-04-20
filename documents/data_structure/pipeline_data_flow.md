@@ -27,12 +27,12 @@
 raw/
 ├── weekly/
 │   └── 2026-03-31/
-│       ├── DDweb_VI_Rohdaten_31032026_1633.xls  ← traffic sensor 1
-│       ├── DDweb_VI_Rohdaten_31032026_1641.xls  ← traffic sensor 2
-│       └── ... (28 files, last 4 digits differ)
+│       ├── mission_id_timespamp.xls  ← traffic sensor 1
+│       ├── mission_id_timestamp.xls  ← traffic sensor 2
+│       └── ...
 └── reference/
-    ├── DDweb_Auftrag_31032026_1706.xlsx          ← mission
-    └── DDweb_Standort_01042026_1658.xlsx         ← location
+    ├── df_misisons          ← mission
+    └── df_locations         ← location
 ```
 
 
@@ -43,9 +43,9 @@ All tables live in the same PostgreSQL database: `berlin_traffic`
 
 | Layer | Table | Source File | Updates |
 |---|---|---|---|
-| Bronze | bronze_traffic | DDweb_VI_Rohdaten_* | weekly append |
-| Bronze | bronze_mission | DDweb_Auftrag_* | when changed |
-| Bronze | bronze_location | DDweb_Standort_* | when changed |
+| Bronze | bronze_traffic | DOWNLOAD_DIR ~50xls all old files append plus new files
+| Bronze | bronze_mission | df_missions | when changed |
+| Bronze | bronze_location | df_locations | when changed |
 | Silver | silver_active_mission | derived from bronze_mission | when changed |
 | Silver | silver_traffic | derived from bronze_traffic | weekly append |
 | Gold | gold_by_location | derived from silver_traffic | weekly rerun |

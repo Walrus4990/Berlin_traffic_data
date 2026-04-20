@@ -5,6 +5,7 @@ Weekly orchestration: ingest → bronze → silver → gold → Superset refresh
 from airflow import DAG
 from airflow.operators.python import PythonOperator, BranchPythonOperator
 from airflow.providers.postgres.operators.postgres import PostgresOperator
+from airflow.operators.empty import EmptyOperator
 from airflow.utils.dates import days_ago
 from datetime import timedelta
 import logging
@@ -13,29 +14,27 @@ logger = logging.getLogger(__name__)
 
 # ── Default args ──────────────────────────────────────────────────────────────
 default_args = {
-    "owner": "lucia",
+    "owner": "berlin",
     "retries": 1,
     "retry_delay": timedelta(minutes=5),
 }
 
 # ── Task functions ────────────────────────────────────────────────────────────
 
-def ingest_missions_and_locations(**kwargs):
-    """Fetch missions and locations from DDWeb → bronze tables"""
+def fetch_and_load_missions(**kwargs):
     from etl.ddweb_auth import DDWebAuth
-    from etl.ddweb_ingest_ref import fetch_missions, fetch_locations
-    import psycopg2, os
+    from etl.ddweb_ingest_ref import fetch_missions, fetch_locations #check if this is teh more efficient functin to call
+    import psycopg2, os  #the sql connection shoudl run via utils not her in the DAG, I think but need to check
 
     auth = DDWebAuth()
     auth.ensure_authenticated()
 
-    missions_df  = fetch_missions(auth)
-    locations_df = fetch_locations(auth)
+    with get_traffic_engine() as engine:
+        new_mission_detected, rows_added = fetch_and_ingest_missions(auth, engine)
 
-    # Push to XCom for next task
-    kwargs["ti"].xcom_push(key="missions_count",  value=len(missions_df))
-    kwargs["ti"].xcom_push(key="locations_count", value=len(locations_df))
-    logger.info(f"Fetched {len(missions_df)} missions, {len(locations_df)} locations")
+    #store a short value in Airflow: True = a new mission ID was found, run the full update path. False = no change, run the reduced path
+    kwargs["ti"].xcom_push(key="new_mission_detected", value=new_mission_detected)
+    logger.info(f"new_mission_detected={new_mission_detected}, rows_added={rows_added}")
 
 
 def check_new_missions(**kwargs):
@@ -51,25 +50,28 @@ def check_new_missions(**kwargs):
     existing = cur.fetchone()[0]
     conn.close()
 
-    if existing == 0:
-        logger.info("No existing missions — full update path")
-        return "full_update"
-    else:
-        logger.info("Missions exist — checking for new ones")
-        return "reduced_update"
+
+# ----- load locations if new missions
+def fetch_and_load_locations(**kwargs):
+    from etl.ddweb_auth import DDWebAuth
+    from etl.bronze_data_layer import fetch_and_ingest_locations
+    from utils.db import get_traffic_engine
+
+    auth = DDWebAuth()
+    auth.ensure_authenticated()
+
+    with get_traffic_engine() as engine:
+        rows = fetch_and_ingest_locations(auth, engine)
+    logger.info(f"Locations loaded: {rows} rows")
 
 
-def full_update(**kwargs):
-    """New mission detected: update bronze, silver_active_mission, run full clean"""
-    logger.info("Running FULL update pipeline...")
-    # TODO: implement full clean using etl/transform.py
+def load_bronze_traffic(**kwargs):
+    from etl.bronze_data_layer import ingest_traffic
+    from utils.db import get_traffic_engine
 
-
-def reduced_update(**kwargs):
-    """No new mission: lookup location, run reduced clean"""
-    logger.info("Running REDUCED update pipeline...")
-    # TODO: implement reduced clean using etl/transform.py
-
+    with get_traffic_engine() as engine:
+        rows = ingest_traffic(engine)
+    logger.info(f"Traffic rows appended: {rows}")
 
 def ingest_traffic_files(**kwargs):
     """Download weekly traffic Excel files from DDWeb → bronze.traffic"""
@@ -151,29 +153,28 @@ with DAG(
     tags=["berlin", "traffic", "superset"],
 ) as dag:
 
-    t_ingest_ref = PythonOperator(
-        task_id="ingest_missions_locations",
-        python_callable=ingest_missions_and_locations,
+    t_missions = PythonOperator(
+        task_id="fetch_and_load_missions",
+        python_callable=fetch_and_load_missions,
     )
 
     t_branch = BranchPythonOperator(
-        task_id="check_new_missions",
-        python_callable=check_new_missions,
+        task_id="branch_on_new_mission",
+        python_callable=branch_on_new_mission,
     )
 
-    t_full = PythonOperator(
-        task_id="full_update",
-        python_callable=full_update,
+    t_locations = PythonOperator(
+        task_id="fetch_and_load_locations",
+        python_callable=fetch_and_load_locations,
     )
 
-    t_reduced = PythonOperator(
-        task_id="reduced_update",
-        python_callable=reduced_update,
+    t_skip_locations = EmptyOperator(
+        task_id="skip_locations",
     )
 
     t_ingest_traffic = PythonOperator(
         task_id="ingest_traffic_files",
-        python_callable=ingest_traffic_files,
+        python_callable=load_bronze_traffic,
         trigger_rule="none_failed_min_one_success",
         execution_timeout=timedelta(hours=2),
     )
