@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 bronze.py — Bronze layer ingestion
 ====================================
@@ -39,9 +40,9 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 logger = logging.getLogger(__name__)
 
-DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "./data/raw/"))
+DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "./data/raw/")) #check if there now is a clash 
 
-# ── Column mapping: ingest file field names → bronze schema ──────────────────
+# Column mapping: ingest file field names → bronze schema
 #
 # The DDweb ingest scripts return the raw portal API field names.
 MISSION_RENAME = {
@@ -139,7 +140,7 @@ def _load_traffic_file(fpath: Path) -> pd.DataFrame: #read the files in the down
     return df
 
 
-# ── Bronze layer functions ────────────────────────────────────────────────────
+# Bronze layer functions
 
 def fetch_and_ingest_missions(auth: DDWebAuth, engine: Engine) -> tuple[bool, int]:
     """
