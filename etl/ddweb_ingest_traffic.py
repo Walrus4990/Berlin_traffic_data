@@ -1,19 +1,20 @@
 # INGEST TRAFFIC SENSOR DATA
     # following functions:
-    # 1. Helper function (date parsing, chunking) - private '_name' only to be used for this ingest purpose
-    # 2. Single downloader for all data chunks for one mission_id
-    # 3. Orchestrator (loops over all missions)
+    #note: - private '_name' only to be used for this ingest purpose
+    # 1. Single downloader for all data chunks for one mission_id
+    # 2. Orchestrator (loops over all missions)
 
 import time
 import logging
 import calendar
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime
 from zoneinfo import ZoneInfo
-import re
+
 import requests
 import os
 from etl.ddweb_auth import DDWebAuth
+from utils.date import parse_date
 
 logger = logging.getLogger(__name__)
 
@@ -37,15 +38,6 @@ TRAFFIC_PAYLOAD_FIELDS = {
 VELOCITY_GROUPS = 6
 WEEKDAYS = 7
 
-
-
-# --- Date parsing: Convert milliseconds (ms) string to datetime and back watching out for timezone
-
-def _parse_date(raw: str) -> datetime:
-    ms = int(re.search(r"\d+", raw).group())
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).astimezone(
-        ZoneInfo("Europe/Berlin")
-    )
 
 # --- Chunking
 
@@ -211,8 +203,8 @@ def complete_download(auth: DDWebAuth, missions_df) -> None:
 
     for _, row in missions_df.iterrows():
         mission_id = row["Id"]
-        from_date = _parse_date(row["FromDate"])
-        to_date = min(_parse_date(row["ToDate"]), today)
+        from_date = parse_date(row["FromDate"])
+        to_date = min(parse_date(row["ToDate"]), today)
 
         try:
             download_mission(auth, mission_id, from_date, to_date)

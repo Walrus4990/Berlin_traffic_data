@@ -78,7 +78,9 @@ services:
 
   scheduler:
     <<: *common
-    image: apache/airflow:2.7.0
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
     depends_on:
        airflow-init:
          condition: service_completed_successfully
@@ -110,13 +112,16 @@ services:
       - ./dags/:/opt/airflow/dags/
       - ./etl/:/opt/airflow/etl/
       - ./utils/:/opt/airflow/utils/
+      - ./data/raw/:/opt/airflow/data/raw/
     tty: true
     stdin_open: true
     profiles: [full]
 
   webserver:  #this is for prod environment to check the DAG is running correctly, debug, troubleshoot etc. will not be run in final prod
     <<: *common
-    image: apache/airflow:2.7.0
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
     depends_on:
       airflow-init:
          condition: service_completed_successfully
@@ -143,6 +148,7 @@ services:
       - ./dags/:/opt/airflow/dags/
       - ./etl/:/opt/airflow/etl/
       - ./utils/:/opt/airflow/utils/
+      - ./data/raw/:/opt/airflow/data/raw/
     ports:
       - "8080:8080"
     healthcheck:
