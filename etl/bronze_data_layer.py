@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 bronze.py — Bronze layer ingestion
 ====================================
@@ -23,7 +24,8 @@ import warnings
 from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import Engine, text
+from sqlalchemy.engine import Engine
+from sqlalchemy import text
 
 from utils.db import get_traffic_engine, save
 from etl.ddweb_auth import DDWebAuth
@@ -34,7 +36,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 logger = logging.getLogger(__name__)
 
-DOWNLOAD_DIR = Path("./data/DDWEB_Downloads/") #adjustable - depends on the ingestion output (link to Miiion)
+DOWNLOAD_DIR = Path("/opt/airflow/data/DDWEB_Downloads/") #adjustable - depends on the ingestion output (link to Miiion)
 
 # Column mapping: ingest file field names → bronze schema
 #
