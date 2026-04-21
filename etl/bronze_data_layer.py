@@ -129,8 +129,8 @@ def _load_traffic_file(fpath: Path) -> pd.DataFrame: #read the files in the down
     Read one traffic Excel file saved by ddweb_ingest_traffic.download_mission(),
     drop the always-zero columns, rename to bronze schema.
     """
-    df = pd.read_excel(fpath, dtype={"Geräte-ID": str})
-    df["source_file"] = fpath.name
+    df = pd.read_parquet(fpath)
+    df["source_file"] = fpath.stem + ".xlsx"  # preserve xlsx name for idempotency
     df = df.drop(columns=TRAFFIC_COLS_DROP, errors="ignore")
     df = df.rename(columns=TRAFFIC_RENAME)
     df["device_id"] = df["device_id"].astype(str).str.strip()
@@ -201,7 +201,7 @@ def ingest_traffic(engine: Engine) -> int:
     Returns number of rows appended.
     """
 
-    traffic_files = sorted(DOWNLOAD_DIR.glob("mission_*.xlsx"))
+    traffic_files = sorted(DOWNLOAD_DIR.glob("mission_*.parquet"))
     if not traffic_files:
         logger.warning("No traffic files found in %s", DOWNLOAD_DIR)
         return 0

@@ -23,7 +23,8 @@ services:
       - ./sql/init/:/docker-entrypoint-initdb.d/
     ports:
       - "5431:5432" #check if I actually need this Docker services on the same network talk to each other, only add if i need to look at the data
-    profiles: [local, full]
+    mem_limit: 512m
+    profiles: [local, full, test]
 
 #-------------PostgreSQL data quality database
   postgres-dq:
@@ -60,7 +61,8 @@ services:
       - postgres-airflow-data:/var/lib/postgresql/data
     ports:
       - "5434:5432"
-    profiles: [full]
+    mem_limit: 512m   
+    profiles: [full, test]
 
 # ---------- Airflow
   airflow-init:
@@ -74,7 +76,7 @@ services:
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://$POSTGRES_AIRFLOW_USER:$POSTGRES_AIRFLOW_PASSWORD@postgres-airflow:5432/$POSTGRES_AIRFLOW_DB
     command: |
       bash -c "airflow db init && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com"
-    profiles: [full]
+    profiles: [full, test]
 
   scheduler:
     <<: *common
@@ -113,6 +115,9 @@ services:
 
       - DOWNLOAD_DIR=/opt/airflow/data/raw
 
+      - AIRFLOW__CORE__PARALLELISM=1        #conserver RAM delete in prod
+      - AIRFLOW__CORE__DAG_CONCURRENCY=1    #conserve RAM delete in prod
+
     command: scheduler
     volumes:
       - ./dags/:/opt/airflow/dags/
@@ -123,7 +128,8 @@ services:
       - ./data/:/opt/airflow/data/
     tty: true
     stdin_open: true
-    profiles: [full]
+    mem_limit: 1500m
+    profiles: [full, test]
 
   webserver:  #this is for prod environment to check the DAG is running correctly, debug, troubleshoot etc. will not be run in final prod
     <<: *common
@@ -175,7 +181,8 @@ services:
       start_period: 60s
     tty: true
     stdin_open: true
-    profiles: [full]
+    mem_limit: 1000m
+    profiles: [full, test]
 
 
 # ---------- MinIO
