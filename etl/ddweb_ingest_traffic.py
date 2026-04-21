@@ -2,15 +2,16 @@ from __future__ import annotations
 # INGEST TRAFFIC SENSOR DATA
     # following functions:
     #note: - private '_name' only to be used for this ingest purpose
-    # 1. Single downloader for all data chunks for one mission_id
-    # 2. Orchestrator (loops over all missions)
+    # 1. define all sorts of variables needed for the inputs matrix and the payload to the portal
+    # 2. Single downloader for all data chunks for one mission_id
+    # 3. Orchestrator (loops over all missions)
 
 import time
 import logging
 import calendar
 from pathlib import Path
-from datetime import datetime
-from zoneinfo import ZoneInfo #check if this crashes the DAG
+from datetime import datetime, timezone
+import pytz
 
 import requests
 import os
@@ -35,6 +36,19 @@ TRAFFIC_PAYLOAD_FIELDS = {
     "FilterName": "",
     "SaveFilter": "false",
 }
+
+VC_FIELDS = [
+    "VC_Lkw","VC_Kfz","VC_Pkw","VC_Sgv","VC_PkwAe","VC_SV","VC_PkwG",
+    "VC_LkwK","VC_LkwAe","VC_Lvm","VC_PkwA","VC_Bus","VC_LkwA",
+    "VC_dkPkwA","VC_Lfw","VC_dkLfw","VC_SattelKfz","VC_dkLfwA",
+    "VC_Krad","VC_KfzTv","VC_Fahrrad","VC_dkLkw","VC_dkLkwA",
+    "VC_dkSattelKfz","VC_dkBus","VC_suft","VC_cabus","VC_siuta",
+    "VC_suta","VC_subv","VC_sufa","VC_suv","VC_tufol","VC_tufa",
+    "VC_tusa","VC_thufa","VC_combstv","VC_thusa","VC_thusoa",
+    "VC_combmtv","VC_trsi","VC_combv","VC_bike","VC_dkKrad",
+    "VC_mcyc","VC_dkPkw","VC_vph","VC_nkKfz","VC_pcar","VC_carsi",
+    "VC_taftv","VC_umv","VC_cakfz"
+]
 
 VELOCITY_GROUPS = 6
 WEEKDAYS = 7
@@ -71,11 +85,15 @@ def _build_payload(mission_id: int, chunk_start: datetime, chunk_end: datetime) 
     for key, value in TRAFFIC_PAYLOAD_FIELDS.items():
         payload.append((key, value))
 
-    for i in range(VELOCITY_GROUPS):            #check if we can delete these from payload they don't do anything
+    for key in VC_FIELDS:
+        payload.append((key, "true"))
+        payload.append((key, "false"))
+
+    for i in range(VELOCITY_GROUPS):
         payload.append((f"VelocityGroup[{i}]", "true"))
         payload.append((f"VelocityGroup[{i}]", "false"))
 
-    for i in range(WEEKDAYS):                   #check if we can delete these from payload they don't do anything
+    for i in range(WEEKDAYS):
         payload.append((f"Weekday[{i}]", "true"))
         payload.append((f"Weekday[{i}]", "false"))
 
@@ -185,6 +203,8 @@ def download_mission(auth: DDWebAuth, mission_id: int, from_date: datetime, to_d
             analysis_id = _do_analyze(auth.session, mission_id, payload)
             _get_partial_result(auth.session, analysis_id)
             file_guid, _ = _get_file_metadata(auth.session, analysis_id)
+            print("Waiting 10s for portal to prepare file...")
+            time.sleep(10)
             filepath = _download_excel(auth.session, file_guid, mission_id, chunk_start, chunk_end)
             mission_files.append(filepath)
         except Exception as e:
@@ -200,7 +220,7 @@ def download_mission(auth: DDWebAuth, mission_id: int, from_date: datetime, to_d
 
 def complete_download(auth: DDWebAuth, missions_df) -> None:
 
-    today = datetime.now(tz=ZoneInfo("Europe/Berlin"))
+    today = datetime.now(tz=timezone.utc).astimezone(pytz.timezone("Europe/Berlin"))
 
     for _, row in missions_df.iterrows():
         mission_id = row["Id"]

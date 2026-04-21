@@ -23,7 +23,8 @@ services:
       - ./sql/init/:/docker-entrypoint-initdb.d/
     ports:
       - "5431:5432" #check if I actually need this Docker services on the same network talk to each other, only add if i need to look at the data
-    profiles: [local, full]
+    mem_limit: 512m
+    profiles: [local, full, test]
 
 #-------------PostgreSQL data quality database
   postgres-dq:
@@ -60,7 +61,8 @@ services:
       - postgres-airflow-data:/var/lib/postgresql/data
     ports:
       - "5434:5432"
-    profiles: [full]
+    mem_limit: 512m   
+    profiles: [full, test]
 
 # ---------- Airflow
   airflow-init:
@@ -74,7 +76,7 @@ services:
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://$POSTGRES_AIRFLOW_USER:$POSTGRES_AIRFLOW_PASSWORD@postgres-airflow:5432/$POSTGRES_AIRFLOW_DB
     command: |
       bash -c "airflow db init && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com"
-    profiles: [full]
+    profiles: [full, test]
 
   scheduler:
     <<: *common
@@ -99,18 +101,23 @@ services:
       - AIRFLOW__CORE__LOAD_EXAMPLES=false
       - AIRFLOW_CONN_POSTGRES_TRAFFIC=postgresql://traffic:traffic@postgres-traffic:5432/berlin_traffic
       - AIRFLOW__WEBSERVER__SECRET_KEY=berlin_traffic_secret
+
       - POSTGRES_TRAFFIC_HOST=postgres-traffic
       - POSTGRES_TRAFFIC_PORT=5432
       - POSTGRES_TRAFFIC_USER=${POSTGRES_TRAFFIC_USER}
       - POSTGRES_TRAFFIC_PASSWORD=${POSTGRES_TRAFFIC_PASSWORD}
       - POSTGRES_TRAFFIC_DB=${POSTGRES_TRAFFIC_DB}
+
       - DDWEB_EMAIL=${DDWEB_EMAIL}
       - DDWEB_PASSWORD=${DDWEB_PASSWORD}
+
       - PYTHONPATH=/opt/airflow
-      
-      #should be taken out and fixed using requireemnts.txt. leaving in for now
-      - _PIP_ADDITIONAL_REQUIREMENTS=requests pandas sqlalchemy>=1.4 psycopg2-binary python-dotenv beautifulsoup4 openpyxl backports.zoneinfo
-      
+
+      - DOWNLOAD_DIR=/opt/airflow/data/raw
+
+      - AIRFLOW__CORE__PARALLELISM=1        #conserver RAM delete in prod
+      - AIRFLOW__CORE__DAG_CONCURRENCY=1    #conserve RAM delete in prod
+
     command: scheduler
     volumes:
       - ./dags/:/opt/airflow/dags/
@@ -121,7 +128,8 @@ services:
       - ./data/:/opt/airflow/data/
     tty: true
     stdin_open: true
-    profiles: [full]
+    mem_limit: 1500m
+    profiles: [full, test]
 
   webserver:  #this is for prod environment to check the DAG is running correctly, debug, troubleshoot etc. will not be run in final prod
     <<: *common
@@ -141,25 +149,20 @@ services:
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://$POSTGRES_AIRFLOW_USER:$POSTGRES_AIRFLOW_PASSWORD@postgres-airflow:5432/$POSTGRES_AIRFLOW_DB
       - AIRFLOW_CONN_POSTGRES_TRAFFIC=postgresql://traffic:traffic@postgres-traffic:5432/berlin_traffic
       - AIRFLOW__WEBSERVER__SECRET_KEY=berlin_traffic_secret
-      
+
       - POSTGRES_TRAFFIC_HOST=postgres-traffic
       - POSTGRES_TRAFFIC_PORT=5432
       - POSTGRES_TRAFFIC_USER=${POSTGRES_TRAFFIC_USER}
       - POSTGRES_TRAFFIC_PASSWORD=${POSTGRES_TRAFFIC_PASSWORD}
       - POSTGRES_TRAFFIC_DB=${POSTGRES_TRAFFIC_DB}
-      
+
       - PYTHONPATH=/opt/airflow
-      
+
       - DDWEB_EMAIL=${DDWEB_EMAIL}
       - DDWEB_PASSWORD=${DDWEB_PASSWORD}
-      
-       #this should be fixed using requirements.txt not pip install in compose.yml
-      - _PIP_ADDITIONAL_REQUIREMENTS=requests pandas sqlalchemy>=1.4 psycopg2-binary python-dotenv beautifulsoup4 openpyxl backports.zoneinfo
-      
-      #I don't think these do anything, check:
-      - POSTGRES_DB=$POSTGRES_AIRFLOW_DB
-      - POSTGRES_PASSWORD=$POSTGRES_AIRFLOW_PASSWORD
-      - POSTGRES_USER=airflow
+
+      - DOWNLOAD_DIR=/opt/airflow/data/raw
+
     command: webserver
     volumes:
       - ./dags/:/opt/airflow/dags/
@@ -178,7 +181,8 @@ services:
       start_period: 60s
     tty: true
     stdin_open: true
-    profiles: [full]
+    mem_limit: 1000m
+    profiles: [full, test]
 
 
 # ---------- MinIO

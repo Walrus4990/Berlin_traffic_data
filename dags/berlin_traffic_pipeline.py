@@ -1,3 +1,4 @@
+
 """
 Berlin Traffic Pipeline DAG
 Weekly orchestration: ingest → bronze → silver → gold → Superset refresh
@@ -23,8 +24,8 @@ default_args = {
 
 def fetch_and_load_missions(**kwargs):
     from etl.ddweb_auth import DDWebAuth
-    from etl.ddweb_ingest_ref import fetch_missions, fetch_locations #check if this is teh more efficient functin to call
-    import psycopg2, os  #the sql connection shoudl run via utils not her in the DAG, I think but need to check
+    from etl.bronze_data_layer import fetch_and_ingest_missions
+    from utils.db import get_traffic_engine
 
     auth = DDWebAuth()
     auth.ensure_authenticated()
@@ -37,18 +38,13 @@ def fetch_and_load_missions(**kwargs):
     logger.info(f"new_mission_detected={new_mission_detected}, rows_added={rows_added}")
 
 
-def check_new_missions(**kwargs):
-    """Compare fetched missions to bronze.mission → branch decision"""
-    import psycopg2
-
-    conn = psycopg2.connect(
-        host="postgres-traffic", dbname="berlin_traffic",
-        user="traffic", password="traffic"
+# ------ If logic in case new mission go to location otherwise skip
+def branch_on_new_mission(**kwargs):
+    new_mission = kwargs["ti"].xcom_pull(   #pulls the short True/False value from previsous function
+        task_ids="fetch_and_load_missions",
+        key="new_mission_detected"
     )
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM bronze.mission")
-    existing = cur.fetchone()[0]
-    conn.close()
+    return "fetch_and_load_locations" if new_mission else "skip_locations"
 
 
 # ----- load locations if new missions
@@ -65,6 +61,7 @@ def fetch_and_load_locations(**kwargs):
     logger.info(f"Locations loaded: {rows} rows")
 
 
+
 def load_bronze_traffic(**kwargs):
     from etl.bronze_data_layer import ingest_traffic
     from utils.db import get_traffic_engine
@@ -73,21 +70,7 @@ def load_bronze_traffic(**kwargs):
         rows = ingest_traffic(engine)
     logger.info(f"Traffic rows appended: {rows}")
 
-def ingest_traffic_files(**kwargs):
-    """Download weekly traffic Excel files from DDWeb → bronze.traffic"""
-    from etl.ddweb_auth import DDWebAuth
-    from etl.ddweb_ingest_ref import fetch_missions
-    from etl.ddweb_ingest_traffic import complete_download
 
-    auth = DDWebAuth()
-    missions_df = fetch_missions(auth)
-
-    # TEST MODE: only the first mission
-    missions_df = missions_df.head(1)
-    logger.info(f"TEST MODE: downloading only {len(missions_df)} mission(s)")
-    
-    complete_download(auth, missions_df)
-    logger.info("Traffic files downloaded")
 
 def run_bronze_layer(**kwargs):
     """Load missions, locations and traffic files into bronze tables"""
@@ -182,11 +165,13 @@ with DAG(
     t_bronze = PythonOperator(
         task_id="run_bronze_layer",
         python_callable=run_bronze_layer,
+        execution_timeout=timedelta(hours=2), 
     )
 
     t_silver = PythonOperator(
         task_id="run_silver_layer",
         python_callable=run_silver_layer,
+        execution_timeout=timedelta(hours=1), 
     )
 
     t_gold = PythonOperator(
@@ -202,7 +187,7 @@ with DAG(
     )
 
     # ── Dependencies ──────────────────────────────────────────────────────────
-    t_ingest_ref >> t_branch
-    t_branch >> [t_full, t_reduced]
-    [t_full, t_reduced] >> t_ingest_traffic
+    t_missions >> t_branch
+    t_branch >> [t_locations, t_skip_locations]
+    [t_locations, t_skip_locations] >> t_ingest_traffic
     t_ingest_traffic >> t_bronze >> t_silver >> t_gold >> t_superset

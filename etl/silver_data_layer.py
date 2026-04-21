@@ -1,4 +1,4 @@
-from __future__ import annotations
+
 """
 silver.py — Silver layer transformation
 =========================================
@@ -14,6 +14,7 @@ silver_traffic         — cleaned, geo-enriched, flag-annotated passage rows (a
 Entry point: run_silver(new_mission_detected, engine)
 """
 
+from __future__ import annotations
 import logging
 import warnings
 
@@ -161,7 +162,23 @@ def step_flag_ambiguous_location(df: pd.DataFrame, df_active_mission: pd.DataFra
             for o in overlap_windows
         )
 
-    df["flag_ambiguous_location"] = df.apply(_in_overlap, axis=1)
+    #df["flag_ambiguous_location"] = df.apply(_in_overlap, axis=1)
+    #apply in chunks
+    # if not overlap_windows:
+    #     df["flag_ambiguous_location"] = False
+    #     return df
+
+    overlap_df = pd.DataFrame(overlap_windows)
+    overlap_df["device_id"] = overlap_df["device_id"].astype(str)
+
+    df = df.merge(overlap_df, on="device_id", how="left")
+    df["flag_ambiguous_location"] = (
+        df["overlap_start"].notna() &
+        df["datum_parsed"].ge(df["overlap_start"]) &
+        df["datum_parsed"].le(df["overlap_end"])
+    )
+    df = df.drop(columns=["overlap_start", "overlap_end"])
+
     return df
 
 
@@ -179,11 +196,16 @@ def step_consolidate_flags(df: pd.DataFrame) -> pd.DataFrame:
 
     df["any_flag"] = df[flag_cols].any(axis=1)
 
-    def _reasons(row):
-        triggered = [c.replace("flag_", "") for c in flag_cols if row.get(c)]
-        return "; ".join(triggered) if triggered else ""
+    # def _reasons(row):
+    #     triggered = [c.replace("flag_", "") for c in flag_cols if row.get(c)]
+    #     return "; ".join(triggered) if triggered else ""
 
-    df["flag_reasons"] = df.apply(_reasons, axis=1)
+    #df["flag_reasons"] = df.apply(_reasons, axis=1)
+    #chunk the process
+    df["flag_reasons"] = df[flag_cols].apply(
+        lambda row: "; ".join(c.replace("flag_", "") for c in flag_cols if row[c]),
+        axis=1
+    )
     return df
 
 
@@ -245,14 +267,30 @@ def _get_deployment_windows(engine: Engine) -> dict:
 
 def step_flag_outside_window(df: pd.DataFrame, windows: dict) -> pd.DataFrame:
     """Flag rows whose timestamp falls outside all known deployment windows."""
-    def _outside(row):
-        ts  = row["datum_parsed"]
-        gid = str(row["device_id"])
-        if pd.isna(ts) or gid not in windows:
-            return True
-        return not any(s <= ts <= e for s, e in windows[gid])
+    # def _outside(row):
+    #     ts  = row["datum_parsed"]
+    #     gid = str(row["device_id"])
+    #     if pd.isna(ts) or gid not in windows:
+    #         return True
+    #     return not any(s <= ts <= e for s, e in windows[gid])
 
-    df["flag_outside_deployment_window"] = df.apply(_outside, axis=1)
+    #df["flag_outside_deployment_window"] = df.apply(_outside, axis=1)
+    #chunk the process
+
+    df["device_id"] = df["device_id"].astype(str)
+    windows_df = pd.DataFrame([
+        {"device_id": did, "win_start": s, "win_end": e}
+        for did, wins in windows.items()
+        for s, e in wins
+    ])
+    merged = df[["device_id", "datum_parsed"]].merge(windows_df, on="device_id", how="left")
+    in_window = (
+        merged["datum_parsed"].ge(merged["win_start"]) &
+        merged["datum_parsed"].le(merged["win_end"])
+    )
+    matched_ids = set(merged[in_window].index)
+    df["flag_outside_deployment_window"] = ~df.index.isin(matched_ids)
+
     return df
 
 
@@ -304,95 +342,115 @@ def enrich_with_location(df: pd.DataFrame, df_mission: pd.DataFrame) -> pd.DataF
 
 def run_silver(new_mission_detected: bool, engine: Engine) -> dict:
     """
-    Silver transformation run. Reads from bronze_* tables, writes to silver_*.
-    Silver uses this function to read bronze tables and write silver tables
-    Returns dict with QA counts for the pipeline log.
+    Silver transformation run. Reads from bronze tables, writes to silver tables.
+    Processes bronze.traffic in 50k-row chunks to control RAM usage on low-memory systems.
+    Each chunk is fully cleaned, geo-enriched, and written to silver.traffic before
+    the next chunk is loaded — avoiding materialising the full table in RAM.
+
+    NOTE: step_flag_duplicates operates within each chunk only. Cross-chunk duplicates
+    will not be caught. This is acceptable for testing but should be addressed for prod
+    by running a dedup pass on silver.traffic after ingestion.
+
+    Returns dict with QA counts accumulated across all chunks.
     """
     logger.info("=== SILVER LAYER START (full=%s) ===", new_mission_detected)
-    qa: dict = {}
+    qa: dict = {
+        "unparseable_timestamp": 0,
+        "unknown_device": 0,
+        "outside_deployment_window": 0,
+        "ambiguous_location": 0,
+        "unclassifiable": 0,
+        "implausible_speed": 0,
+        "duplicates": 0,
+        "large_speed_ratio": 0,
+        "total_flagged": 0,
+        "total_clean": 0,
+        "no_coords": 0,
+        "rows_processed": 0,
+    }
 
-    # Load two reference tables
+    # Load reference tables (small — full load is fine)
     df_mission  = pd.read_sql("SELECT * FROM bronze.mission",  engine)
     df_location = pd.read_sql("SELECT * FROM bronze.location", engine)
 
-    # Build silver_active_mission: mission + location joined, deploy_end set
+    # Build and write silver.active_mission
     df_active_mission = build_mission(df_mission, df_location)
     df_active_mission.to_sql(
         "active_mission", engine, schema="silver", if_exists="replace", index=False
     )
     logger.info("Refreshed silver.active_mission: %d rows.", len(df_active_mission))
 
-    # Load unprocessed bronze.traffic rows
-    # "Unprocessed" = source_file not yet seen in silver.traffic
-    df_bronze = pd.read_sql("SELECT * FROM bronze.traffic", engine)
-    try:
-        processed = pd.read_sql(
-            "SELECT DISTINCT source_file FROM silver.traffic", engine
-        )["source_file"].tolist()
-        df = df_bronze[~df_bronze["source_file"].isin(processed)].copy()
-    except Exception:
-        df = df_bronze.copy()   # silver.traffic doesn't exist yet on first run
-
-    if df.empty:
-        logger.info("No new bronze.traffic rows to process.")
-        return {"rows_processed": 0}
-
-    logger.info("Processing %d new bronze.traffic rows.", len(df))
-
+    # Pre-compute reference data used in every chunk
     known_ids = set(df_mission["device_id"].astype(str).unique())
     windows   = _get_deployment_windows(engine)
 
-    # Cleaning steps
-    df = step_parse_timestamps(df)
-    qa["unparseable_timestamp"] = int(df["flag_unparseable_timestamp"].sum())
+    # Identify already-processed files for idempotency
+    try:
+        processed_set = set(
+            pd.read_sql("SELECT DISTINCT source_file FROM silver.traffic", engine)["source_file"].tolist()
+        )
+    except Exception:
+        processed_set = set()  # silver.traffic doesn't exist yet on first run
 
-    if new_mission_detected:
-        # Full path: run all checks
-        df = step_flag_unknown_device(df, known_ids)
-        qa["unknown_device"] = int(df["flag_unknown_device"].sum())
+    total = pd.read_sql("SELECT COUNT(*) FROM bronze.traffic", engine).iloc[0, 0]
+    placeholders = ",".join(f"'{f}'" for f in processed_set) if processed_set else "'__none__'"
+    query = f"SELECT * FROM bronze.traffic WHERE source_file NOT IN ({placeholders})"
+    msg = f"Silver: processing unprocessed rows out of {total:,} total in bronze.traffic"
+    logger.info(msg)
+    print(msg, flush=True)
 
-        df = step_flag_outside_window(df, windows)
-        qa["outside_deployment_window"] = int(df["flag_outside_deployment_window"].sum())
+    # Process and write one chunk at a time — avoids loading full table into RAM
+    for chunk in pd.read_sql(query, engine, chunksize=50000):
+        if chunk.empty:
+            continue
 
-        df = step_flag_ambiguous_location(df, df_active_mission)
-        qa["ambiguous_location"] = int(df["flag_ambiguous_location"].sum())
+        chunk = step_parse_timestamps(chunk)
+        qa["unparseable_timestamp"] += int(chunk["flag_unparseable_timestamp"].sum())
 
-    else:
-        # Reduced path: set flags to False, skip the checks
-        df["flag_unknown_device"]            = False
-        df["flag_outside_deployment_window"] = False
-        df["flag_ambiguous_location"]        = False
+        if new_mission_detected:
+            chunk = step_flag_unknown_device(chunk, known_ids)
+            qa["unknown_device"] += int(chunk["flag_unknown_device"].sum())
 
-    df = step_flag_unclassifiable(df)
-    qa["unclassifiable"] = int(df["flag_unclassifiable"].sum())
+            chunk = step_flag_outside_window(chunk, windows)
+            qa["outside_deployment_window"] += int(chunk["flag_outside_deployment_window"].sum())
 
-    df = step_flag_speed(df)
-    qa["implausible_speed"] = int(df["flag_speed"].sum())
+            chunk = step_flag_ambiguous_location(chunk, df_active_mission)
+            qa["ambiguous_location"] += int(chunk["flag_ambiguous_location"].sum())
+        else:
+            chunk["flag_unknown_device"]            = False
+            chunk["flag_outside_deployment_window"] = False
+            chunk["flag_ambiguous_location"]        = False
 
-    df = step_flag_duplicates(df)
-    qa["duplicates"] = int(df["flag_duplicate"].sum())
+        chunk = step_flag_unclassifiable(chunk)
+        qa["unclassifiable"] += int(chunk["flag_unclassifiable"].sum())
 
-    df = step_flag_speed_ratio(df)
-    qa["large_speed_ratio"] = int(df["flag_speed_delta"].sum())
+        chunk = step_flag_speed(chunk)
+        qa["implausible_speed"] += int(chunk["flag_speed"].sum())
 
-    df = step_consolidate_flags(df)
-    qa["total_flagged"] = int(df["any_flag"].sum())
-    qa["total_clean"]   = int((~df["any_flag"]).sum())
+        chunk = step_flag_duplicates(chunk)
+        qa["duplicates"] += int(chunk["flag_duplicate"].sum())
 
-    # Geo-enrichment
-    # Uses df_active_mission (has lat/lon + deploy_end) not raw bronze.mission
-    df = enrich_with_location(df, df_active_mission)
-    qa["no_coords"] = int(df["flag_no_coords"].sum())
+        chunk = step_flag_speed_ratio(chunk)
+        qa["large_speed_ratio"] += int(chunk["flag_speed_delta"].sum())
 
-    # Write to silver.traffic
-    df["processed_at"]  = pd.Timestamp.now()
-    df["pipeline_path"] = "full" if new_mission_detected else "reduced"
-    df.to_sql("traffic", engine, schema="silver", if_exists="append", index=False)
+        chunk = step_consolidate_flags(chunk)
+        qa["total_flagged"] += int(chunk["any_flag"].sum())
+        qa["total_clean"]   += int((~chunk["any_flag"]).sum())
 
-    qa["rows_processed"] = len(df)
+        chunk = enrich_with_location(chunk, df_active_mission)
+        qa["no_coords"] += int(chunk["flag_no_coords"].sum())
+
+        chunk["processed_at"]  = pd.Timestamp.now()
+        chunk["pipeline_path"] = "full" if new_mission_detected else "reduced"
+        chunk.to_sql("traffic", engine, schema="silver", if_exists="append", index=False)
+
+        qa["rows_processed"] += len(chunk)
+        logger.info("Chunk written: %d rows (total so far: %d)", len(chunk), qa["rows_processed"])
+        print(f"Chunk written: {len(chunk):,} rows (total: {qa['rows_processed']:,})", flush=True)
+
     logger.info(
         "Appended %d rows to silver.traffic (%d flagged, %d clean).",
-        len(df), qa["total_flagged"], qa["total_clean"],
+        qa["rows_processed"], qa["total_flagged"], qa["total_clean"],
     )
     logger.info("=== SILVER LAYER DONE ===")
     return qa
