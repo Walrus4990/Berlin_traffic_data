@@ -3,7 +3,6 @@ import requests
 from datetime import datetime
 import os
 from dotenv import load_dotenv
-from bs4 import BeautifulSoup
 import time
 import random
 

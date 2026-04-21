@@ -11,6 +11,9 @@ client.ensure_authenticated()
 
 # --- Fetch missions ---
 missions_df = fetch_missions(client)
+traffic.complete_download(client, missions_df)
+
+
 print(missions_df[["Id", "FromDate", "ToDate"]])
 
 locatons_df = fetch_locations(client)
