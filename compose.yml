@@ -99,18 +99,20 @@ services:
       - AIRFLOW__CORE__LOAD_EXAMPLES=false
       - AIRFLOW_CONN_POSTGRES_TRAFFIC=postgresql://traffic:traffic@postgres-traffic:5432/berlin_traffic
       - AIRFLOW__WEBSERVER__SECRET_KEY=berlin_traffic_secret
+
       - POSTGRES_TRAFFIC_HOST=postgres-traffic
       - POSTGRES_TRAFFIC_PORT=5432
       - POSTGRES_TRAFFIC_USER=${POSTGRES_TRAFFIC_USER}
       - POSTGRES_TRAFFIC_PASSWORD=${POSTGRES_TRAFFIC_PASSWORD}
       - POSTGRES_TRAFFIC_DB=${POSTGRES_TRAFFIC_DB}
+
       - DDWEB_EMAIL=${DDWEB_EMAIL}
       - DDWEB_PASSWORD=${DDWEB_PASSWORD}
+
       - PYTHONPATH=/opt/airflow
-      
-      #should be taken out and fixed using requireemnts.txt. leaving in for now
-      - _PIP_ADDITIONAL_REQUIREMENTS=requests pandas sqlalchemy>=1.4 psycopg2-binary python-dotenv beautifulsoup4 openpyxl backports.zoneinfo
-      
+
+      - DOWNLOAD_DIR=/opt/airflow/data/raw
+
     command: scheduler
     volumes:
       - ./dags/:/opt/airflow/dags/
@@ -141,25 +143,20 @@ services:
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://$POSTGRES_AIRFLOW_USER:$POSTGRES_AIRFLOW_PASSWORD@postgres-airflow:5432/$POSTGRES_AIRFLOW_DB
       - AIRFLOW_CONN_POSTGRES_TRAFFIC=postgresql://traffic:traffic@postgres-traffic:5432/berlin_traffic
       - AIRFLOW__WEBSERVER__SECRET_KEY=berlin_traffic_secret
-      
+
       - POSTGRES_TRAFFIC_HOST=postgres-traffic
       - POSTGRES_TRAFFIC_PORT=5432
       - POSTGRES_TRAFFIC_USER=${POSTGRES_TRAFFIC_USER}
       - POSTGRES_TRAFFIC_PASSWORD=${POSTGRES_TRAFFIC_PASSWORD}
       - POSTGRES_TRAFFIC_DB=${POSTGRES_TRAFFIC_DB}
-      
+
       - PYTHONPATH=/opt/airflow
-      
+
       - DDWEB_EMAIL=${DDWEB_EMAIL}
       - DDWEB_PASSWORD=${DDWEB_PASSWORD}
-      
-       #this should be fixed using requirements.txt not pip install in compose.yml
-      - _PIP_ADDITIONAL_REQUIREMENTS=requests pandas sqlalchemy>=1.4 psycopg2-binary python-dotenv beautifulsoup4 openpyxl backports.zoneinfo
-      
-      #I don't think these do anything, check:
-      - POSTGRES_DB=$POSTGRES_AIRFLOW_DB
-      - POSTGRES_PASSWORD=$POSTGRES_AIRFLOW_PASSWORD
-      - POSTGRES_USER=airflow
+
+      - DOWNLOAD_DIR=/opt/airflow/data/raw
+
     command: webserver
     volumes:
       - ./dags/:/opt/airflow/dags/

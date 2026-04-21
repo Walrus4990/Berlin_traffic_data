@@ -1,4 +1,3 @@
-from __future__ import annotations
 """
 bronze.py — Bronze layer ingestion
 ====================================
@@ -40,7 +39,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 logger = logging.getLogger(__name__)
 
-DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "./data/raw/")) #check if there now is a clash 
+DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "./data/raw/")) #check if there now is a clash
 
 # Column mapping: ingest file field names → bronze schema
 #
@@ -109,21 +108,19 @@ def _table_exists(engine: Engine, table: str, schema: str = "bronze") -> bool:
                 "  SELECT 1 FROM information_schema.tables"
                 "  WHERE table_schema=:s AND table_name=:t"
                 ")"
-            ),
-            {"s": schema, "t": table},
+            ).bindparams(s=schema, t=table)
         ).scalar()
 
 
-def _get_existing_mission_keys(engine: Engine) -> Set[Tuple]:
+def _get_existing_mission_ids(engine: Engine) -> Set[Tuple]:
 
-    """Return (device_id, start_date) pairs already stored in bronze.mission."""
     if not _table_exists(engine, "mission"):
         return set()
     with engine.connect() as conn:
         rows = conn.execute(
-            text("SELECT device_id::text, start_date FROM bronze.mission")
+            text("SELECT mission_id FROM bronze.mission")
         ).fetchall()
-    return {(str(r[0]), pd.Timestamp(r[1])) for r in rows}
+    return {r[0] for r in rows}
 
 
 def _load_traffic_file(fpath: Path) -> pd.DataFrame: #read the files in the download dir (bucket)
@@ -157,30 +154,19 @@ def fetch_and_ingest_missions(auth: DDWebAuth, engine: Engine) -> tuple[bool, in
 
     df["ingested_at"] = pd.Timestamp.now()
 
-    existing_keys = _get_existing_mission_keys(engine)
-    new_keys = {
-        (str(row["device_id"]), pd.Timestamp(row["start_date"]))
-        for _, row in df.iterrows()
-        if pd.notna(row["start_date"])
-    }
-    truly_new = new_keys - existing_keys
+    existing_ids = _get_existing_mission_ids(engine)
+    truly_new = df[~df["mission_id"].isin(existing_ids)]
 
-    if not truly_new:
+    if truly_new.empty:
         logger.info("No new missions detected — bronze.mission unchanged.")
         return False, 0
 
-    new_mask = df.apply(
-        lambda r: (str(r["device_id"]), pd.Timestamp(r["start_date"])) in truly_new
-        if pd.notna(r["start_date"]) else False,
-        axis=1,
-    )
-    rows_to_insert = df[new_mask].copy()
-    save(rows_to_insert, "mission", "bronze", engine)
-
+    save(truly_new, "mission", "bronze", engine)
     logger.info(
-        "Inserted %d new mission row(s) into bronze.mission.", len(rows_to_insert)
+        "Inserted %d new mission row(s) into bronze.mission.", len(truly_new)
     )
-    return True, len(rows_to_insert)
+    return True, len(truly_new)
+
 
 def fetch_and_ingest_locations(auth: DDWebAuth, engine: Engine) -> int:
     """
@@ -203,6 +189,7 @@ def fetch_and_ingest_locations(auth: DDWebAuth, engine: Engine) -> int:
     save(df, "location", "bronze", engine)
     logger.info("Replaced bronze.location: %d rows written.", len(df))
     return len(df)
+
 
 def ingest_traffic(engine: Engine) -> int:
     """
