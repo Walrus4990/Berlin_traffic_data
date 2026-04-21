@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 default_args = {
     "owner": "berlin",
     "retries": 1,
-    "retry_delay": timedelta(minutes=5),
+    "retry_delay": timedelta(minutes=5), 
 }
 
 # ── Task functions ────────────────────────────────────────────────────────────
@@ -100,30 +100,75 @@ def run_gold_layer(**kwargs):
         result = run_gold(engine)
     logger.info(f"Gold layer result: {result}")
 
+
 def refresh_superset(**kwargs):
-    """Trigger Superset dataset cache refresh via API"""
-    import requests, os
+    import os, requests
+    from utils.db import get_traffic_engine
 
-    session = requests.Session()
     base = "http://superset:8088"
+    session = requests.Session()
 
-    # Login
+    # --- login ---
     r = session.post(f"{base}/api/v1/security/login", json={
-        "username": os.getenv("SUPERSET_ADMIN_USER", "admin"),
+        "username": os.getenv("SUPERSET_ADMIN_USER", "admin"),  #remove hardcoding in prod
         "password": os.getenv("SUPERSET_ADMIN_PASSWORD", "admin"),
         "provider": "db"
     })
-    token = r.json().get("access_token")
+    r.raise_for_status()
+    token = r.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    # Refresh all datasets
+    csrf = session.get(f"{base}/api/v1/security/csrf_token/", headers=headers)
+    csrf_token = csrf.json()["result"]
+    headers["X-CSRFToken"] = csrf_token
+    headers["Referer"] = base
+
+   # ---------------- DB connection ----------------
+    with get_traffic_engine() as engine:
+        sqlalchemy_uri = str(engine.url)
+
+    dbs = session.get(f"{base}/api/v1/database/", headers=headers).json()
+
+    db = next(
+        (d for d in dbs.get("result", []) if d.get("database_name") == "traffic_db"),
+        None
+    )
+
+    if not db:
+        resp = session.post(f"{base}/api/v1/database/", json={
+            "database_name": "traffic_db", #why the name, check on final tidy - it's teh superset db connection'
+            "sqlalchemy_uri": sqlalchemy_uri
+        }, headers=headers)
+        db = resp.json()
+        
+    db_id = db["id"]
+
+    # ---------------- dataset: gold.traffic ----------------
     datasets = session.get(f"{base}/api/v1/dataset/", headers=headers).json()
-    for ds in datasets.get("result", []):
-        session.put(
-            f"{base}/api/v1/dataset/{ds['id']}/refresh",
-            headers=headers
-        )
-        logger.info(f"Refreshed dataset: {ds['table_name']}")
+
+    exists = any(
+        d.get("schema") == "gold" and d.get("table_name") == "traffic"
+        for d in datasets.get("result", [])
+    )
+
+    if not exists:
+        session.post(f"{base}/api/v1/dataset/", json={
+            "database": db_id,
+            "schema": "gold",
+            "table_name": "traffic"
+        }, headers=headers)
+
+    # ---------------- dashboard import ----------------
+    try:
+        with open("/app/superset_home/exports/dashboard_export_20260419T194107.zip", "rb") as f:
+            session.post(
+                f"{base}/api/v1/dashboard/import/",
+                headers=headers,
+                files={"formData": f},
+                data={"overwrite": "true", "passwords": '{"databases/traffic_db.yaml": "traffic"}'}
+            )
+        except FileNotFoundError:
+            logger.warning("Dashboard zip not found, skipping import")
 
 
 # ── DAG definition ────────────────────────────────────────────────────────────
