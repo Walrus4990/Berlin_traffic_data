@@ -260,11 +260,11 @@ def run_bronze() -> dict:
         location_rows = fetch_and_ingest_locations(auth, engine)
 
         # Step 3 — Traffic
-        rows_ingested = ingest_traffic(engine)
+        #rows_ingested = ingest_traffic(engine) Traffic ingestion handled by t_ingest_traffic task upstream
 
     result = {
         "new_mission_detected":  new_mission_detected,
-        "rows_ingested":         rows_ingested,
+        "rows_ingested":         0,         #handled upstream
         "mission_rows_added":    mission_rows_added,
         "location_rows_written": location_rows,
     }
