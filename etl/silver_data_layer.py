@@ -1,4 +1,4 @@
-from __future__ import annotations
+
 """
 silver.py — Silver layer transformation
 =========================================
@@ -14,6 +14,7 @@ silver_traffic         — cleaned, geo-enriched, flag-annotated passage rows (a
 Entry point: run_silver(new_mission_detected, engine)
 """
 
+from __future__ import annotations
 import logging
 import warnings
 
@@ -161,7 +162,23 @@ def step_flag_ambiguous_location(df: pd.DataFrame, df_active_mission: pd.DataFra
             for o in overlap_windows
         )
 
-    df["flag_ambiguous_location"] = df.apply(_in_overlap, axis=1)
+    #df["flag_ambiguous_location"] = df.apply(_in_overlap, axis=1)
+    #apply in chunks
+    # if not overlap_windows:
+    #     df["flag_ambiguous_location"] = False
+    #     return df
+
+    overlap_df = pd.DataFrame(overlap_windows)
+    overlap_df["device_id"] = overlap_df["device_id"].astype(str)
+
+    df = df.merge(overlap_df, on="device_id", how="left")
+    df["flag_ambiguous_location"] = (
+        df["overlap_start"].notna() &
+        df["datum_parsed"].ge(df["overlap_start"]) &
+        df["datum_parsed"].le(df["overlap_end"])
+    )
+    df = df.drop(columns=["overlap_start", "overlap_end"])
+
     return df
 
 
@@ -179,11 +196,16 @@ def step_consolidate_flags(df: pd.DataFrame) -> pd.DataFrame:
 
     df["any_flag"] = df[flag_cols].any(axis=1)
 
-    def _reasons(row):
-        triggered = [c.replace("flag_", "") for c in flag_cols if row.get(c)]
-        return "; ".join(triggered) if triggered else ""
+    # def _reasons(row):
+    #     triggered = [c.replace("flag_", "") for c in flag_cols if row.get(c)]
+    #     return "; ".join(triggered) if triggered else ""
 
-    df["flag_reasons"] = df.apply(_reasons, axis=1)
+    #df["flag_reasons"] = df.apply(_reasons, axis=1)
+    #chunk the process
+    df["flag_reasons"] = df[flag_cols].apply(
+        lambda row: "; ".join(c.replace("flag_", "") for c in flag_cols if row[c]),
+        axis=1
+    )
     return df
 
 
@@ -245,14 +267,30 @@ def _get_deployment_windows(engine: Engine) -> dict:
 
 def step_flag_outside_window(df: pd.DataFrame, windows: dict) -> pd.DataFrame:
     """Flag rows whose timestamp falls outside all known deployment windows."""
-    def _outside(row):
-        ts  = row["datum_parsed"]
-        gid = str(row["device_id"])
-        if pd.isna(ts) or gid not in windows:
-            return True
-        return not any(s <= ts <= e for s, e in windows[gid])
+    # def _outside(row):
+    #     ts  = row["datum_parsed"]
+    #     gid = str(row["device_id"])
+    #     if pd.isna(ts) or gid not in windows:
+    #         return True
+    #     return not any(s <= ts <= e for s, e in windows[gid])
 
-    df["flag_outside_deployment_window"] = df.apply(_outside, axis=1)
+    #df["flag_outside_deployment_window"] = df.apply(_outside, axis=1)
+    #chunk the process
+
+    df["device_id"] = df["device_id"].astype(str)
+    windows_df = pd.DataFrame([
+        {"device_id": did, "win_start": s, "win_end": e}
+        for did, wins in windows.items()
+        for s, e in wins
+    ])
+    merged = df[["device_id", "datum_parsed"]].merge(windows_df, on="device_id", how="left")
+    in_window = (
+        merged["datum_parsed"].ge(merged["win_start"]) &
+        merged["datum_parsed"].le(merged["win_end"])
+    )
+    matched_ids = set(merged[in_window].index)
+    df["flag_outside_deployment_window"] = ~df.index.isin(matched_ids)
+
     return df
 
 
@@ -304,34 +342,43 @@ def enrich_with_location(df: pd.DataFrame, df_mission: pd.DataFrame) -> pd.DataF
 
 def run_silver(new_mission_detected: bool, engine: Engine) -> dict:
     """
-    Silver transformation run. Reads from bronze_* tables, writes to silver_*.
-    Silver uses this function to read bronze tables and write silver tables
+    Silver transformation run. Reads from bronze tables, writes to silver tables.
     Returns dict with QA counts for the pipeline log.
     """
     logger.info("=== SILVER LAYER START (full=%s) ===", new_mission_detected)
     qa: dict = {}
 
-    # Load two reference tables
+    # Load reference tables (small — full load is fine)
     df_mission  = pd.read_sql("SELECT * FROM bronze.mission",  engine)
     df_location = pd.read_sql("SELECT * FROM bronze.location", engine)
 
-    # Build silver_active_mission: mission + location joined, deploy_end set
+    # Build and write silver.active_mission
     df_active_mission = build_mission(df_mission, df_location)
     df_active_mission.to_sql(
         "active_mission", engine, schema="silver", if_exists="replace", index=False
     )
     logger.info("Refreshed silver.active_mission: %d rows.", len(df_active_mission))
 
-    # Load unprocessed bronze.traffic rows
-    # "Unprocessed" = source_file not yet seen in silver.traffic
-    df_bronze = pd.read_sql("SELECT * FROM bronze.traffic", engine)
+    # Identify already-processed files for idempotency
     try:
-        processed = pd.read_sql(
-            "SELECT DISTINCT source_file FROM silver.traffic", engine
-        )["source_file"].tolist()
-        df = df_bronze[~df_bronze["source_file"].isin(processed)].copy()
+        processed_set = set(
+            pd.read_sql("SELECT DISTINCT source_file FROM silver.traffic", engine)["source_file"].tolist()
+        )
     except Exception:
-        df = df_bronze.copy()   # silver.traffic doesn't exist yet on first run
+        processed_set = set()  # silver.traffic doesn't exist yet on first run
+
+    # Load only unprocessed bronze.traffic rows, chunked to control RAM
+    placeholders = ",".join(f"'{f}'" for f in processed_set) if processed_set else "'__none__'"
+    query = f"SELECT * FROM bronze.traffic WHERE source_file NOT IN ({placeholders})"
+    df = pd.concat(
+        pd.read_sql(query, engine, chunksize=50000),
+        ignore_index=True
+    )
+
+    total = pd.read_sql("SELECT COUNT(*) FROM bronze.traffic", engine).iloc[0, 0]
+    msg = f"Silver: processing {len(df):,} unprocessed rows out of {total:,} total in bronze.traffic"
+    logger.info(msg)
+    print(msg, flush=True)
 
     if df.empty:
         logger.info("No new bronze.traffic rows to process.")

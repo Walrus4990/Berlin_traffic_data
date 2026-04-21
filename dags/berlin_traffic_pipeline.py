@@ -72,24 +72,6 @@ def load_bronze_traffic(**kwargs):
 
 
 
-
-
-def ingest_traffic_files(**kwargs):
-    """Download weekly traffic Excel files from DDWeb → bronze.traffic"""
-    from etl.ddweb_auth import DDWebAuth
-    from etl.ddweb_ingest_ref import fetch_missions
-    from etl.ddweb_ingest_traffic import complete_download
-
-    auth = DDWebAuth()
-    missions_df = fetch_missions(auth)
-
-    # TEST MODE: only the first mission
-    missions_df = missions_df.head(1)
-    logger.info(f"TEST MODE: downloading only {len(missions_df)} mission(s)")
-
-    complete_download(auth, missions_df)
-    logger.info("Traffic files downloaded")
-
 def run_bronze_layer(**kwargs):
     """Load missions, locations and traffic files into bronze tables"""
     from etl.bronze_data_layer import run_bronze
@@ -183,11 +165,13 @@ with DAG(
     t_bronze = PythonOperator(
         task_id="run_bronze_layer",
         python_callable=run_bronze_layer,
+        execution_timeout=timedelta(hours=2), 
     )
 
     t_silver = PythonOperator(
         task_id="run_silver_layer",
         python_callable=run_silver_layer,
+        execution_timeout=timedelta(hours=1), 
     )
 
     t_gold = PythonOperator(
