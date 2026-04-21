@@ -15,6 +15,7 @@ Returns:     dict with row counts for each table written
 
 import logging
 import warnings
+from sqlalchemy import text
 
 import pandas as pd
 from sqlalchemy.engine import Engine
@@ -193,7 +194,10 @@ def run_gold(engine: Engine) -> dict:
 
     df_hourly = build_hourly(df_silver)
     _check_gold_hourly(df_hourly, n_input=len(df_silver))
-    df_hourly.to_sql("traffic", engine, schema="gold", if_exists="replace", index=False)
+    #df_hourly.to_sql("traffic", engine, schema="gold", if_exists="replace", index=False) - replaces Gold table, risks breaking Superset
+    with engine.begin() as conn:
+        conn.execute(text("TRUNCATE TABLE gold.traffic"))       #TRUNCATE TABLE gold.traffic empties the table completely but leaves the table structure 
+    df_hourly.to_sql("traffic", engine, schema="gold", if_exists="append", index=False)
     logger.info("Wrote %d rows to gold.traffic.", len(df_hourly))
     result = {"rows_traffic": len(df_hourly)}
     return result
