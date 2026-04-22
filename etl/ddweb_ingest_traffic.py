@@ -12,11 +12,22 @@ import calendar
 from pathlib import Path
 from datetime import datetime, timezone
 import pytz
+from minio import Minio
+from minio.error import S3Error
+import io
 
 import requests
 import os
 from etl.ddweb_auth import DDWebAuth
 from utils.date import parse_date
+
+MINIO_CLIENT = Minio(
+    os.getenv("MINIO_ENDPOINT", "minio:9000"),
+    access_key=os.getenv("MINIO_ROOT_USER", "minioadmin"),
+    secret_key=os.getenv("MINIO_ROOT_PASSWORD", "minioadmin"),
+    secure=False
+)
+MINIO_BUCKET = os.getenv("MINIO_BUCKET", "berlin-traffic-raw")
 
 logger = logging.getLogger(__name__)
 
@@ -180,12 +191,28 @@ def _download_excel(
     )
     response.raise_for_status()
 
-    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     filename = f"mission_{mission_id}_{chunk_start.strftime('%Y%m%d')}_{chunk_end.strftime('%Y%m%d')}.xlsx"
+
+    # Upload to MinIO
+    try:
+        data = io.BytesIO(response.content)
+        MINIO_CLIENT.put_object(
+            MINIO_BUCKET,
+            filename,
+            data,
+            length=len(response.content),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        logger.info(f"Uploaded {filename} to MinIO bucket {MINIO_BUCKET}")
+    except S3Error as e:
+        logger.error(f"MinIO upload failed for {filename}: {e}")
+        raise
+
+    # Also save locally for bronze layer processing
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     filepath = DOWNLOAD_DIR / filename
     filepath.write_bytes(response.content)
     logger.info(f"Saved {filepath}")
-    print(f"Saved {filepath}")
     return filepath
 
 
