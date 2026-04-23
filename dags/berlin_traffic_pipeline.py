@@ -168,7 +168,7 @@ def refresh_superset(**kwargs):
                 data={"overwrite": "true", "passwords": '{"databases/traffic_db.yaml": "traffic"}'}
             )
     except FileNotFoundError:
-            logger.warning("Dashboard zip not found, skipping import")
+        logger.warning("Dashboard zip not found, skipping import")
 
 
 # ── DAG definition ────────────────────────────────────────────────────────────
