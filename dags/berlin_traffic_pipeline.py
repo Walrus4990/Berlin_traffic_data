@@ -10,6 +10,11 @@ from airflow.operators.empty import EmptyOperator
 from airflow.utils.dates import days_ago
 from datetime import timedelta
 import logging
+import io
+from datetime import date
+import pandas as pd
+from utils.db import get_traffic_engine
+from utils.minio import MINIO_CLIENT, MINIO_BUCKET
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +22,7 @@ logger = logging.getLogger(__name__)
 default_args = {
     "owner": "berlin",
     "retries": 1,
-    "retry_delay": timedelta(minutes=5), 
+    "retry_delay": timedelta(minutes=5),
 }
 
 # ── Task functions ────────────────────────────────────────────────────────────
@@ -69,6 +74,7 @@ def load_bronze_traffic(**kwargs):
     with get_traffic_engine() as engine:
         rows = ingest_traffic(engine)
     logger.info(f"Traffic rows appended: {rows}")
+    kwargs["ti"].xcom_push(key="rows_added", value=rows)
 
 
 
@@ -99,6 +105,35 @@ def run_gold_layer(**kwargs):
     with get_traffic_engine() as engine:
         result = run_gold(engine)
     logger.info(f"Gold layer result: {result}")
+
+
+def publish_gold(**kwargs):
+    """Upload gold.traffic to MinIO as Parquet — only when new files were ingested from DDWeb."""
+    rows_added = kwargs["ti"].xcom_pull(task_ids="ingest_traffic_files", key="rows_added") or 0
+    if not rows_added:
+        logger.info("No new traffic rows ingested — skipping MinIO gold export.")
+        return
+
+    with get_traffic_engine() as engine:
+        df = pd.read_sql("SELECT * FROM gold.traffic ORDER BY datum, stunde, geraet_id", engine)
+
+    if df.empty:
+        logger.warning("gold.traffic is empty — nothing to publish.")
+        return
+
+    if not MINIO_CLIENT.bucket_exists(MINIO_BUCKET):
+        MINIO_CLIENT.make_bucket(MINIO_BUCKET)
+
+    buf = io.BytesIO()
+    df.to_parquet(buf, index=False, engine="pyarrow")
+    payload = buf.getvalue()
+
+    today = date.today().isoformat()
+    for key in (f"gold/traffic_{today}.parquet", "gold/traffic_latest.parquet"):
+        MINIO_CLIENT.put_object(MINIO_BUCKET, key, io.BytesIO(payload), length=len(payload),
+                                content_type="application/octet-stream")
+
+    logger.info("Exported %d gold rows to MinIO (gold/traffic_%s.parquet)", len(df), today)
 
 
 def refresh_superset(**kwargs):
@@ -140,7 +175,7 @@ def refresh_superset(**kwargs):
             "sqlalchemy_uri": sqlalchemy_uri
         }, headers=headers)
         db = resp.json()
-        
+
     db_id = db["id"]
 
     # ---------------- dataset: gold.traffic ----------------
@@ -210,19 +245,24 @@ with DAG(
     t_bronze = PythonOperator(
         task_id="run_bronze_layer",
         python_callable=run_bronze_layer,
-        execution_timeout=timedelta(hours=2), 
+        execution_timeout=timedelta(hours=2),
     )
 
     t_silver = PythonOperator(
         task_id="run_silver_layer",
         python_callable=run_silver_layer,
-        execution_timeout=timedelta(hours=1), 
+        execution_timeout=timedelta(hours=1),
     )
 
     t_gold = PythonOperator(
         task_id="run_gold_layer",
         python_callable=run_gold_layer,
         trigger_rule="none_failed_min_one_success",
+    )
+
+    t_publish = PythonOperator(
+        task_id="publish_gold_to_minio",
+        python_callable=publish_gold,
     )
 
     t_superset = PythonOperator(
@@ -235,4 +275,4 @@ with DAG(
     t_missions >> t_branch
     t_branch >> [t_locations, t_skip_locations]
     [t_locations, t_skip_locations] >> t_ingest_traffic
-    t_ingest_traffic >> t_bronze >> t_silver >> t_gold >> t_superset
+    t_ingest_traffic >> t_bronze >> t_silver >> t_gold >> t_publish >> t_superset
