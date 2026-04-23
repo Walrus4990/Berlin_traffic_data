@@ -10,7 +10,7 @@ import time
 import logging
 import calendar
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import pytz
 from minio import Minio
 from minio.error import S3Error
@@ -23,6 +23,7 @@ from etl.ddweb_auth import DDWebAuth
 from utils.date import parse_date
 from utils.schema import TRAFFIC_COLS_DROP, TRAFFIC_RENAME
 from utils.minio import MINIO_CLIENT, MINIO_BUCKET
+from utils.minio import read_tracker
 
 
 
@@ -62,6 +63,15 @@ WEEKDAYS = 7
 
 
 # --- Chunking
+
+def _get_chunk_start(mission_id: int, from_date: datetime, tracker: dict) -> datetime:
+    entry = tracker.get(str(mission_id))
+    if entry and entry.get("last_downloaded_to"):
+        last = datetime.strptime(entry["last_downloaded_to"], "%Y-%m-%d")
+        last = pytz.timezone("Europe/Berlin").localize(last)
+        return last + timedelta(days=1)
+    return from_date
+
 
 def _get_chunks(from_date: datetime, to_date: datetime) -> list[tuple[datetime, datetime]]:
     if (to_date - from_date).days <= 31: #if the dowload timeframe is smaller than the portal limit,no chunking
@@ -221,12 +231,25 @@ def _download_into_parquet(
 
 # ---  Download all monthly chunks for one mission
 
-def download_mission(auth: DDWebAuth, mission_id: int, from_date: datetime, to_date: datetime) -> list[str]:
-    chunks = _get_chunks(from_date, to_date)
+def download_mission(
+    auth: DDWebAuth,
+    mission_id: int,
+    from_date: datetime,
+    to_date: datetime,
+    tracker:dict,
+) -> list:
+    """
+    download_mission() determines the outer boundary of the download: chunk_start to chunk_end
+    Passes both to _get_chunks() which decides: ≤31 days → one chunk, >31 days → monthly chunks
+    Loop runs over whatever _get_chunks() returns
+    """
+
+    chunk_start = _get_chunk_start(mission_id, from_date, tracker)
+    chunks = _get_chunks(chunk_start, chunk_end)
     mission_files = []
 
     for chunk_start, chunk_end in chunks:
-        logger.info(f"Mission {mission_id}: downloading {chunk_start} to {chunk_end}")
+        logger.info("Mission %s: downloading %s to %s", mission_id, chunk_start.date(), chunk_end.date())
         try:
             auth.ensure_authenticated()
             payload = _build_payload(mission_id, chunk_start, chunk_end)
@@ -239,7 +262,7 @@ def download_mission(auth: DDWebAuth, mission_id: int, from_date: datetime, to_d
             if filepath:
                 mission_files.append(filepath)
         except Exception as e:
-            logger.error(f"Mission {mission_id} chunk {chunk_start}–{chunk_end} failed: {e}")
+            logger.error("Mission %s chunk %s-%s failed: %s", mission_id, chunk_start.date(), chunk_end.date(), e)
             continue
         finally:
             time.sleep(20)      #ensure requesst come at human scale
@@ -247,11 +270,14 @@ def download_mission(auth: DDWebAuth, mission_id: int, from_date: datetime, to_d
     return mission_files
 
 
-# --- Loop over all missions in DataFrame
+# --- Loop over all missions for initial complete download
 
 def complete_download(auth: DDWebAuth, missions_df) -> None:
 
-    today = datetime.now(tz=timezone.utc).astimezone(pytz.timezone("Europe/Berlin"))
+    tracker = read_tracker()
+    today = datetime.now(tz=pytz.timezone("Europe/Berlin"))
+
+    logger.info("Initial download: %s missions total", len(missions_df))
 
     for _, row in missions_df.iterrows():
         mission_id = row["Id"]
@@ -259,8 +285,32 @@ def complete_download(auth: DDWebAuth, missions_df) -> None:
         to_date = min(parse_date(row["ToDate"]), today)
 
         try:
-            download_mission(auth, mission_id, from_date, to_date)
+            download_mission(auth, mission_id, from_date, to_date, tracker)
         except Exception as e:
-            logger.error(f"Mission {mission_id} aborted: {e}")
+            logger.error("Mission %s aborted: %s", mission_id, e)
             # Continue to next mission rather than killing the whole run
+            continue
+
+# --- Loop over active missions only fro weekly download
+
+def weekly_download(auth: DDWebAuth, missions_df) -> None:
+
+    today = datetime.now(tz=pytz.timezone("Europe/Berlin"))
+    tracker = read_tracker()
+
+    active_missions = missions_df[
+        missions_df["ToDate"].apply(lambda x: parse_date(x) > today)
+    ]
+
+    logger.info("Weekly download: %s active missions", len(active_missions))
+
+    for _, row in active_missions.iterrows():
+        mission_id = row["Id"]
+        from_date = parse_date(row["FromDate"])
+        to_date = parse_date(row["ToDate"])
+
+        try:
+            download_mission(auth, mission_id, from_date, to_date, tracker)
+        except Exception as e:
+            logger.error("Mission %s aborted: %s", mission_id, e)
             continue
