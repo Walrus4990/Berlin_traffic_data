@@ -130,7 +130,7 @@ def _load_traffic_file(fpath: Path) -> pd.DataFrame: #read the files in the down
     drop the always-zero columns, rename to bronze schema.
     """
     df = pd.read_parquet(fpath)
-    df["source_file"] = fpath.stem + ".xlsx"  # preserve xlsx name for idempotency
+    df["source_file"] = fpath.name 
     df = df.drop(columns=TRAFFIC_COLS_DROP, errors="ignore")
     df = df.rename(columns=TRAFFIC_RENAME)
     df["device_id"] = df["device_id"].astype(str).str.strip()
