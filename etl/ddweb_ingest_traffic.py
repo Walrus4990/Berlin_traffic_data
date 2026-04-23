@@ -1,4 +1,3 @@
-from __future__ import annotations
 # INGEST TRAFFIC SENSOR DATA
     # following functions:
     #note: - private '_name' only to be used for this ingest purpose
@@ -6,6 +5,7 @@ from __future__ import annotations
     # 2. Single downloader for all data chunks for one mission_id
     # 3. Orchestrator (loops over all missions)
 
+from __future__ import annotations
 import time
 import logging
 import calendar
@@ -15,24 +15,20 @@ import pytz
 from minio import Minio
 from minio.error import S3Error
 import io
-
 import requests
 import os
+import pandas as pd
+
 from etl.ddweb_auth import DDWebAuth
 from utils.date import parse_date
+from utils.schema import TRAFFIC_COLS_DROP, TRAFFIC_RENAME
+from utils.minio import MINIO_CLIENT, MINIO_BUCKET
 
-MINIO_CLIENT = Minio(
-    os.getenv("MINIO_ENDPOINT", "minio:9000"),
-    access_key=os.getenv("MINIO_ROOT_USER", "minioadmin"),
-    secret_key=os.getenv("MINIO_ROOT_PASSWORD", "minioadmin"),
-    secure=False
-)
-MINIO_BUCKET = os.getenv("MINIO_BUCKET", "berlin-traffic-raw")
+
 
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://ddweb.topo-web.com"
-DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "./data/raw/")) #check if teh ref to data/ rather than data/raw is oK
 
 ANALYSIS_MODEL = 6
 
@@ -67,13 +63,16 @@ WEEKDAYS = 7
 
 # --- Chunking
 
-def _get_month_chunks(from_date: datetime, to_date: datetime) -> list[tuple[datetime, datetime]]:
+def _get_chunks(from_date: datetime, to_date: datetime) -> list[tuple[datetime, datetime]]:
+    if (to_date - from_date).days <= 31: #if the dowload timeframe is smaller than the portal limit,no chunking
+        return [(from_date, to_date)]
+
     chunks = []
     cursor = from_date
 
     while cursor <= to_date:
         last_day = calendar.monthrange(cursor.year, cursor.month)[1]        # picks the last day of any month
-        chunk_end = min(datetime(cursor.year, cursor.month, last_day, tzinfo=from_date.tzinfo), to_date) # picks whatever is sooner, the last day of the month  or mission end
+        chunk_end = min(datetime(cursor.year, cursor.month, last_day, 23, 59, 59, tzinfo=from_date.tzinfo), to_date) # picks whatever is sooner, the last day of the month  or mission end
         chunks.append((cursor, chunk_end))
 
         if cursor.month == 12:
@@ -178,12 +177,12 @@ def _get_file_metadata(session: requests.Session, analysis_id: int) -> tuple[str
 
 # Step 4: download binary xlsx, save with our own filename
 
-def _download_excel(
+def _download_into_parquet(
     session: requests.Session,
     file_guid: str,
     mission_id: int,
     chunk_start: datetime,
-    chunk_end: datetime,) -> Path:
+    chunk_end: datetime,) -> str | None:
 
     response = session.get(
         f"{BASE_URL}/AnalysisX/DownloadExcel",
@@ -191,35 +190,39 @@ def _download_excel(
     )
     response.raise_for_status()
 
-    filename = f"mission_{mission_id}_{chunk_start.strftime('%Y%m%d')}_{chunk_end.strftime('%Y%m%d')}.xlsx"
+    filename = f"mission_{mission_id}_{chunk_start.strftime('%Y%m%d')}_{chunk_end.strftime('%Y%m%d')}.parquet"
+
+    # Convert xlsx bytes → DataFrame → parquet bytes in memory
+    df = pd.read_excel(io.BytesIO(response.content))
+    if df.empty:
+        logger.warning("No data for mission %s chunk %s-%s, skipping upload", mission_id, chunk_start, chunk_end)
+        return None
+
+    df = df.drop(columns=TRAFFIC_COLS_DROP, errors="ignore")
+    df = df.rename(columns=TRAFFIC_RENAME)
+    df["device_id"] = df["device_id"].astype(str).str.strip()
+
+    buffer = io.BytesIO()
+    df.to_parquet(buffer, index=False)
+    buffer.seek(0)
+    parquet_bytes = buffer.getvalue()
 
     # Upload to MinIO
-    try:
-        data = io.BytesIO(response.content)
-        MINIO_CLIENT.put_object(
-            MINIO_BUCKET,
-            filename,
-            data,
-            length=len(response.content),
-            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-        logger.info(f"Uploaded {filename} to MinIO bucket {MINIO_BUCKET}")
-    except S3Error as e:
-        logger.error(f"MinIO upload failed for {filename}: {e}")
-        raise
-
-    # Also save locally for bronze layer processing
-    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    filepath = DOWNLOAD_DIR / filename
-    filepath.write_bytes(response.content)
-    logger.info(f"Saved {filepath}")
-    return filepath
+    MINIO_CLIENT.put_object(exit
+        MINIO_BUCKET,
+        filename,
+        io.BytesIO(parquet_bytes),
+        length=len(parquet_bytes),
+        content_type="application/octet-stream"
+    )
+    logger.info(f"Uploaded {filename} to MinIO bucket {MINIO_BUCKET}")
+    return filename
 
 
 # ---  Download all monthly chunks for one mission
 
-def download_mission(auth: DDWebAuth, mission_id: int, from_date: datetime, to_date: datetime) -> list[Path]:
-    chunks = _get_month_chunks(from_date, to_date)
+def download_mission(auth: DDWebAuth, mission_id: int, from_date: datetime, to_date: datetime) -> list[str]:
+    chunks = _get_chunks(from_date, to_date)
     mission_files = []
 
     for chunk_start, chunk_end in chunks:
@@ -232,8 +235,9 @@ def download_mission(auth: DDWebAuth, mission_id: int, from_date: datetime, to_d
             file_guid, _ = _get_file_metadata(auth.session, analysis_id)
             print("Waiting 10s for portal to prepare file...")
             time.sleep(10)
-            filepath = _download_excel(auth.session, file_guid, mission_id, chunk_start, chunk_end)
-            mission_files.append(filepath)
+            filepath = _download_into_parquet(auth.session, file_guid, mission_id, chunk_start, chunk_end)
+            if filepath:
+                mission_files.append(filepath)
         except Exception as e:
             logger.error(f"Mission {mission_id} chunk {chunk_start}–{chunk_end} failed: {e}")
             continue

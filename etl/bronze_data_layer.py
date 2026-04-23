@@ -1,13 +1,13 @@
 """
 bronze.py — Bronze layer ingestion
 ====================================
-Reads DataFrames produced by the DDweb ingest scripts and loads them into
+Reads parqet files from MinIO and and loads them into
 PostgreSQL bronze schema tables.
 
 Inputs:
     df_missions  — DataFrame returned by ddweb_ingest_ref.fetch_missions()
     df_locations — DataFrame returned by ddweb_ingest_ref.fetch_locations()
-    Traffic xlsx — files in DOWNLOAD_DIR written by ddweb_ingest_traffic.py
+    Traffic parquet — files in MinIO written by ddweb_ingest_traffic.py
 
 Tables written:
     bronze.mission   — deployment history, updated when changed
@@ -27,10 +27,13 @@ import pandas as pd
 from sqlalchemy.engine import Engine
 from sqlalchemy import text
 from typing import Set, Tuple
+import io
 import re
 
-from utils.db import get_traffic_engine, save
+from utils.db import get_traffic_engine, save, get_loaded_files
 from utils.date import parse_date
+from utils.schema import MISSION_RENAME, LOCATION_RENAME, TRAFFIC_COLS_DROP, TRAFFIC_RENAME
+from utils.minio import MINIO_CLIENT, MINIO_BUCKET
 from etl.ddweb_auth import DDWebAuth
 from etl.ddweb_ingest_ref import fetch_missions
 from etl.ddweb_ingest_ref import fetch_locations
@@ -39,66 +42,6 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 logger = logging.getLogger(__name__)
 
-DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "./data/raw/")) #check if there now is a clash
-
-# Column mapping: ingest file field names → bronze schema
-#
-# The DDweb ingest scripts return the raw portal API field names.
-MISSION_RENAME = {
-    "Id":            "mission_id",
-    "Created":       "created_at",
-    "FromDate":      "start_date",
-    "ToDate":        "end_date",
-    "Description":   "description",
-    "LocationTitle": "location_title", # join key
-    "City":          "city",
-    "Street":        "street",
-    "StreetNumber":  "street_number",
-    "Zipcode":       "zipcode",
-    "DeviceNumber":  "device_id",      # primary identifier
-    "DeviceType":    "device_type",
-}
-
-LOCATION_RENAME = {
-    "Id":                "location_id",
-    "Created":           "created_at",
-    "Description":       "description",
-    "LocationTitle":     "location_title", # join key
-    "Street":            "street",
-    "StreetNumber":      "street_number",
-    "Zipcode":           "zipcode",
-    "City":              "city",
-    "DrivingDirection":  "driving_direction",
-    "OppositeDirection": "opposite_direction",
-    "PosUserLat":        "lat",
-    "PosUserLng":        "lon",
-}
-
-# Traffic Excel columns that are always zero — dropped before loading to bronze.
-TRAFFIC_COLS_DROP = [
-    "Schall (dB)", "Abstand (cm)", "Fahrspur",
-    "Geschwindigkeit (km/h)", "Richtung",
-]
-
-TRAFFIC_RENAME = {
-    "Geräte-ID":                        "device_id",
-    "Datum":                            "date_raw",
-    "Eintrittsgeschwindigkeit (km/h)":  "speed_entry",
-    "Austrittsgeschwindigkeit (km/h)":  "speed_exit",
-    "Länge (dm)":                       "length_dm",
-    "Klasse":                           "vehicle_class",
-    "Fahrzeugklassen-Bezeichnung":      "vehicle_class_label",
-}
-
-
-
-# def _parse_msdate(val):
-#     """Convert /Date(1646050942957)/ → datetime. Returns NaT if unparseable."""
-#     if isinstance(val, str):
-#         m = re.search(r'/Date\((-?\d+)\)/', val)
-#         if m:
-#             return pd.Timestamp(int(m.group(1)), unit="ms")
-#     return pd.NaT
 
 def _table_exists(engine: Engine, table: str, schema: str = "bronze") -> bool:
     with engine.connect() as conn:
@@ -121,20 +64,6 @@ def _get_existing_mission_ids(engine: Engine) -> Set[Tuple]:
             text("SELECT mission_id FROM bronze.mission")
         ).fetchall()
     return {r[0] for r in rows}
-
-
-def _load_traffic_file(fpath: Path) -> pd.DataFrame: #read the files in the download dir (bucket)
-    """
-    What does this function do:
-    Read one traffic Excel file saved by ddweb_ingest_traffic.download_mission(),
-    drop the always-zero columns, rename to bronze schema.
-    """
-    df = pd.read_parquet(fpath)
-    df["source_file"] = fpath.name 
-    df = df.drop(columns=TRAFFIC_COLS_DROP, errors="ignore")
-    df = df.rename(columns=TRAFFIC_RENAME)
-    df["device_id"] = df["device_id"].astype(str).str.strip()
-    return df
 
 
 # Bronze layer functions
@@ -193,38 +122,34 @@ def fetch_and_ingest_locations(auth: DDWebAuth, engine: Engine) -> int:
 
 def ingest_traffic(engine: Engine) -> int:
     """
-    Load all traffic Excel files from DOWNLOAD_DIR into bronze.traffic.
-    Files written by ddweb_ingest_traffic.py match the pattern mission_*.xlsx.
-
+    List all parquet objects in MinIO bucket
     Skips files whose source_file name already exists in bronze.traffic -> idempotent
-
     Returns number of rows appended.
     """
 
-    traffic_files = sorted(DOWNLOAD_DIR.glob("mission_*.parquet"))
+    objects = MINIO_CLIENT.list_objects(MINIO_BUCKET, prefix="mission_")
+    traffic_files = [obj.object_name for obj in objects if obj.object_name.endswith(".parquet")]
+
     if not traffic_files:
-        logger.warning("No traffic files found in %s", DOWNLOAD_DIR)
+        logger.warning("No parquet files found in MinIO bucket %s", MINIO_BUCKET)
         return 0
 
-    already_loaded: set[str] = set()
-    if _table_exists(engine, "traffic"):
-        with engine.connect() as conn:
-            rows = conn.execute(
-                text("SELECT DISTINCT source_file FROM bronze.traffic")
-            ).fetchall()
-            already_loaded = {r[0] for r in rows}
+    # Check what's already loaded
+    already_loaded = get_loaded_files(engine, "bronze", "traffic")
 
     total_rows = 0
-    for fpath in traffic_files:
-        if fpath.name in already_loaded:
-            logger.info("  Skipping (already loaded): %s", fpath.name)
+    for filename in traffic_files:
+        if filename in already_loaded:
+            logger.info("  Skipping (already loaded): %s", filename)
             continue
 
-        df = _load_traffic_file(fpath)
+        response = MINIO_CLIENT.get_object(MINIO_BUCKET, filename)
+        df = pd.read_parquet(io.BytesIO(response.read()))
+        df["source_file"] = filename
         df["ingested_at"] = pd.Timestamp.now()
         save(df, "traffic", "bronze", engine)
         total_rows += len(df)
-        logger.info("  Loaded %d rows from %s", len(df), fpath.name)
+        logger.info("  Loaded %d rows from %s", len(df), filename)
 
     logger.info("Traffic ingestion complete: %d rows appended.", total_rows)
     return total_rows
