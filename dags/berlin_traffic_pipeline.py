@@ -167,7 +167,7 @@ def refresh_superset(**kwargs):
                 files={"formData": f},
                 data={"overwrite": "true", "passwords": '{"databases/traffic_db.yaml": "traffic"}'}
             )
-        except FileNotFoundError:
+    except FileNotFoundError:
             logger.warning("Dashboard zip not found, skipping import")
 
 
