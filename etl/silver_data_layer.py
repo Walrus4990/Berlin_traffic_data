@@ -17,11 +17,12 @@ Entry point: run_silver(new_mission_detected, engine)
 from __future__ import annotations
 import logging
 import warnings
-
 import numpy as np
 import pandas as pd
 from sqlalchemy.engine import Engine
 from sqlalchemy import text
+
+from utils.db import get_loaded_files
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -385,12 +386,7 @@ def run_silver(new_mission_detected: bool, engine: Engine) -> dict:
     windows   = _get_deployment_windows(engine)
 
     # Identify already-processed files for idempotency
-    try:
-        processed_set = set(
-            pd.read_sql("SELECT DISTINCT source_file FROM silver.traffic", engine)["source_file"].tolist()
-        )
-    except Exception:
-        processed_set = set()  # silver.traffic doesn't exist yet on first run
+    processed_set = get_loaded_files(engine, "silver", "traffic")
 
     total = pd.read_sql("SELECT COUNT(*) FROM bronze.traffic", engine).iloc[0, 0]
     placeholders = ",".join(f"'{f}'" for f in processed_set) if processed_set else "'__none__'"

@@ -20,7 +20,7 @@ LeWagon final project.
 ### How to use requirements.txt:
         1. Navigate to project folder
         2. Create a virtual environment: python3 -m venv venv
-        3. Activate the virtual environment: source venv/bin/activate
+        3. Activate the virtual environment: source venv/bin/activate (if you use python 3.8 use: source .venv38/bin/activate)
         You should now see something like: (venv) your-name@machine:project-folder$
         4. Install dependencies from requirements.txt: pip install -r requirements.txt
         5. Verify installation (optional): pip list
@@ -34,7 +34,9 @@ LeWagon final project.
       3. Docker spins up identical containers for everyone. The first time will take time, after that should be fast.
       Note: the local profile is smaller than the full one. Look at compose.yml to compare
 
-
+### How to use Docker containers
+    **Fresh start:** If volumes have been wiped, recreate the MinIO bucket before running the pipeline:
+`docker exec -it $(docker ps -qf "name=minio") sh -c "mc alias set local http://localhost:9000 minioadmin minioadmin && mc mb local/berlin-traffic-raw"`
 
 ## Background info
 **The problem:** Berlin local authority has traffic sensor data it is not using.
