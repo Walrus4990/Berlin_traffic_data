@@ -13,7 +13,6 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 import pytz
 from minio import Minio
-from minio.error import S3Error
 import io
 import requests
 import os
@@ -23,9 +22,7 @@ from etl.ddweb_auth import DDWebAuth
 from etl.ddweb_ingest_ref import fetch_missions
 from utils.date import parse_date
 from utils.schema import TRAFFIC_COLS_DROP, TRAFFIC_RENAME
-from utils.minio import MINIO_CLIENT, MINIO_BUCKET
-from utils.minio import read_tracker
-
+from utils.minio import MINIO_CLIENT, MINIO_BUCKET, read_tracker
 
 
 logger = logging.getLogger(__name__)
@@ -265,6 +262,7 @@ def download_mission(
             filepath = _download_into_parquet(auth.session, file_guid, mission_id, chunk_start, chunk_end)
             if filepath:
                 mission_files.append(filepath)
+
         except Exception as e:
             logger.error("Mission %s chunk %s-%s failed: %s", mission_id, chunk_start.date(), chunk_end.date(), e)
             continue
@@ -309,7 +307,7 @@ def weekly_download() -> None:
     active_missions = missions_df[
         missions_df["ToDate"].apply(lambda x: parse_date(x) > today)
     ]
-    active_missions = active_missions[active_missions["Id"] == 99511]  # TEMP: test only
+    active_missions = active_missions[active_missions["Id"].isin([99511, 99512])]  # TEMP: test only
 
     logger.info("Weekly download: %s active missions", len(active_missions))
 
