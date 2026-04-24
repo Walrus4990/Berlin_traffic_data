@@ -22,7 +22,7 @@ import pandas as pd
 from sqlalchemy.engine import Engine
 from sqlalchemy import text
 
-from utils.db import get_loaded_files
+from utils.db import get_loaded_files, get_dq_engine, save_qa_report
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -44,6 +44,24 @@ ACTIVE_SENTINELS = {
 }
 
 DEDUP_COLS = ["device_id", "datum_parsed", "vehicle_class", "speed_entry", "speed_exit", "length_dm"]
+
+QA_STEP_LABELS = {
+    "source_files_loaded":          "Files loaded",
+    "total_rows_ingested":          "Total rows ingested",
+    "total_rows_clean":             "Rows with no flags",
+    "total_rows_any_flag":          "Rows with ≥1 flag",
+    "unparseable_timestamp":        "Unparseable timestamps",
+    "unknown_device":               "Rows with unregistered Geräte-ID",
+    "outside_deployment_window":    "Rows outside deployment window",
+    "unclassifiable":               "Rows Klasse 6/250 (unclassifiable)",
+    "implausible_speed_entry":      "Implausible entry speed",
+    "implausible_speed_exit":       "Implausible exit speed",
+    "implausible_speed":            "Implausible speed (entry or exit)",
+    "duplicates":                   "Duplicate rows (all copies flagged)",
+    "large_speed_ratio":            "Large entry/exit speed delta",
+    "ambiguous_location":           "Rows in ambiguous location window",
+    "no_coords":                    "Rows with no GPS coordinates",
+}
 
 
 # Cleaning step functions
@@ -314,7 +332,7 @@ def enrich_with_location(df: pd.DataFrame, df_mission: pd.DataFrame) -> pd.DataF
     df_mission["device_id"] = df_mission["device_id"].astype(str)
 
     geo_cols  = ["location_title", "street", "street_number", "zipcode",
-                 "driving_direction", "lat", "lon", "start_date", "deploy_end"]
+                    "driving_direction", "lat", "lon", "start_date", "deploy_end"]
     available = ["device_id"] + [c for c in geo_cols if c in df_mission.columns]
 
     df["_row_id"] = range(len(df))
@@ -356,19 +374,23 @@ def run_silver(new_mission_detected: bool, engine: Engine) -> dict:
     """
     logger.info("=== SILVER LAYER START (full=%s) ===", new_mission_detected)
     qa: dict = {
+        "rows_processed": 0,
+        "source_files_loaded": 0,
+        "total_flagged": 0,
+        "total_clean": 0,
         "unparseable_timestamp": 0,
         "unknown_device": 0,
         "outside_deployment_window": 0,
-        "ambiguous_location": 0,
         "unclassifiable": 0,
+        "implausible_speed_entry": 0,
+        "implausible_speed_exit": 0,
         "implausible_speed": 0,
         "duplicates": 0,
         "large_speed_ratio": 0,
-        "total_flagged": 0,
-        "total_clean": 0,
+        "ambiguous_location": 0,
         "no_coords": 0,
-        "rows_processed": 0,
     }
+    _source_files_seen: set = set()
 
     # Load reference tables (small — full load is fine)
     df_mission  = pd.read_sql("SELECT * FROM bronze.mission",  engine)
@@ -421,7 +443,9 @@ def run_silver(new_mission_detected: bool, engine: Engine) -> dict:
         qa["unclassifiable"] += int(chunk["flag_unclassifiable"].sum())
 
         chunk = step_flag_speed(chunk)
-        qa["implausible_speed"] += int(chunk["flag_speed"].sum())
+        qa["implausible_speed_entry"] += int(chunk["flag_speed_entry"].sum())
+        qa["implausible_speed_exit"]  += int(chunk["flag_speed_exit"].sum())
+        qa["implausible_speed"]       += int(chunk["flag_speed"].sum())
 
         chunk = step_flag_duplicates(chunk)
         qa["duplicates"] += int(chunk["flag_duplicate"].sum())
@@ -436,6 +460,9 @@ def run_silver(new_mission_detected: bool, engine: Engine) -> dict:
         chunk = enrich_with_location(chunk, df_active_mission)
         qa["no_coords"] += int(chunk["flag_no_coords"].sum())
 
+        if "source_file" in chunk.columns:
+            _source_files_seen.update(chunk["source_file"].dropna().unique())
+
         chunk["processed_at"]  = pd.Timestamp.now()
         chunk["pipeline_path"] = "full" if new_mission_detected else "reduced"
         chunk.to_sql("traffic", engine, schema="silver", if_exists="append", index=False)
@@ -443,6 +470,32 @@ def run_silver(new_mission_detected: bool, engine: Engine) -> dict:
         qa["rows_processed"] += len(chunk)
         logger.info("Chunk written: %d rows (total so far: %d)", len(chunk), qa["rows_processed"])
         print(f"Chunk written: {len(chunk):,} rows (total: {qa['rows_processed']:,})", flush=True)
+
+    # Populate summary aliases used by the QA report
+    qa["source_files_loaded"]  = len(_source_files_seen)
+    qa["total_rows_ingested"]  = qa["rows_processed"]
+    qa["total_rows_clean"]     = qa["total_clean"]
+    qa["total_rows_any_flag"]  = qa["total_flagged"]
+
+    # Print QA summary table
+    qa_display = {QA_STEP_LABELS[k]: qa[k] for k in QA_STEP_LABELS if k in qa}
+    qa_df = pd.DataFrame.from_dict(qa_display, orient="index", columns=["count"])
+    summary_lines = [
+        "",
+        "=== QA Report — Silver Layer ===",
+        qa_df.to_string(header=True),
+        "",
+    ]
+    summary = "\n".join(summary_lines)
+    print(summary)
+    logger.info(summary)
+
+    # Persist to postgres-dq
+    try:
+        with get_dq_engine() as dq_engine:
+            save_qa_report(qa, layer="silver", dq_engine=dq_engine)
+    except Exception as exc:
+        logger.warning("Could not persist QA report to postgres-dq: %s", exc)
 
     logger.info(
         "Appended %d rows to silver.traffic (%d flagged, %d clean).",
