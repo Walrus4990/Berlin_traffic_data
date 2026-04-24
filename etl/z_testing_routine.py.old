@@ -11,13 +11,63 @@ client.ensure_authenticated()
 
 # --- Fetch missions ---
 missions_df = fetch_missions(client)
-traffic.complete_download(client, missions_df)
-
+#locatons_df = fetch_locations(client)
 
 print(missions_df[["Id", "FromDate", "ToDate"]])
+#print(locatons_df[["Id"]])
 
-locatons_df = fetch_locations(client)
-print(locatons_df[["Id"]])
+# # =========================
+# # TEST CASE - test minio in bronze layer
+# # =========================
+
+from etl.bronze_data_layer import ingest_traffic
+from utils.db import get_traffic_engine
+
+with get_traffic_engine() as engine:
+    rows = ingest_traffic(engine)
+    print(f"Rows loaded: {rows}")
+
+# # =========================
+# # TEST CASE - test minio
+# # =========================
+
+mission_id = 40671
+row = missions_df[missions_df["Id"] == mission_id].iloc[0]
+from_date = traffic.parse_date(row["FromDate"])
+to_date = traffic.parse_date(row["ToDate"])
+test_chunks = traffic._get_month_chunks(from_date, to_date)
+chunk_start, chunk_end = test_chunks[0]
+payload = traffic._build_payload(mission_id, chunk_start, chunk_end)
+analysis_id = traffic._do_analyze(client.session, mission_id, payload)
+traffic._get_partial_result(client.session, analysis_id)
+file_guid, file_name = traffic._get_file_metadata(client.session, analysis_id)
+result = traffic._download_into_parquet(
+    client.session,
+    file_guid,
+    mission_id,
+    chunk_start,
+    chunk_end,
+)
+print(result)
+
+
+# # =========================
+# # TEST CASE - move schemas
+# # =========================
+
+from utils.schema import MISSION_RENAME, LOCATION_RENAME, TRAFFIC_COLS_DROP, TRAFFIC_RENAME
+print(MISSION_RENAME)
+
+#if print run the following:
+
+import pandas as pd
+import pytz
+from etl.bronze_data_layer import _load_traffic_file
+from pathlib import Path
+
+df = _load_traffic_file(Path("./data/raw/mission_40671_20220201_20220228.parquet"))
+print(df.shape)
+print(df.columns.tolist())
 
 # # =========================
 # # TEST CASE 1
