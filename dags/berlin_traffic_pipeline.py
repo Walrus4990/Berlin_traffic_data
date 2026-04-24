@@ -4,9 +4,7 @@ Berlin Traffic Pipeline DAG
 Weekly orchestration: ingest → bronze → silver → gold → Superset refresh
 """
 from airflow import DAG
-from airflow.operators.python import PythonOperator, BranchPythonOperator
-from airflow.providers.postgres.operators.postgres import PostgresOperator
-from airflow.operators.empty import EmptyOperator
+from airflow.operators.python import PythonOperator
 from airflow.utils.dates import days_ago
 from datetime import timedelta
 import logging
@@ -27,64 +25,27 @@ default_args = {
 
 # ── Task functions ────────────────────────────────────────────────────────────
 
-def fetch_and_load_missions(**kwargs):
-    from etl.ddweb_auth import DDWebAuth
-    from etl.bronze_data_layer import fetch_and_ingest_missions
-    from utils.db import get_traffic_engine
-
-    auth = DDWebAuth()
-    auth.ensure_authenticated()
-
-    with get_traffic_engine() as engine:
-        new_mission_detected, rows_added = fetch_and_ingest_missions(auth, engine)
-
-    #store a short value in Airflow: True = a new mission ID was found, run the full update path. False = no change, run the reduced path
-    kwargs["ti"].xcom_push(key="new_mission_detected", value=new_mission_detected)
-    logger.info(f"new_mission_detected={new_mission_detected}, rows_added={rows_added}")
+def run_ingest_ref(**kwargs):
+    """Fetch missions and locations from DDWeb portal → bronze.mission, bronze.location"""
+    from etl.bronze_data_layer import ingest_ref
+    result = ingest_ref()
+    kwargs["ti"].xcom_push(key="new_mission_detected", value=result["new_mission_detected"])
+    logger.info("ingest_ref result: %s", result)
 
 
-# ------ If logic in case new mission go to location otherwise skip
-def branch_on_new_mission(**kwargs):
-    new_mission = kwargs["ti"].xcom_pull(   #pulls the short True/False value from previsous function
-        task_ids="fetch_and_load_missions",
-        key="new_mission_detected"
-    )
-    return "fetch_and_load_locations" if new_mission else "skip_locations"
+def run_ingest_traffic(**kwargs):
+    """Download this week's traffic files from DDWeb portal → MinIO"""
+    from etl.ddweb_ingest_traffic import weekly_download
+    weekly_download()
+    logger.info("Traffic files downloaded to MinIO")
 
 
-# ----- load locations if new missions
-def fetch_and_load_locations(**kwargs):
-    from etl.ddweb_auth import DDWebAuth
-    from etl.bronze_data_layer import fetch_and_ingest_locations
-    from utils.db import get_traffic_engine
+def run_load_traffic_to_bronze(**kwargs):
+    """Read new parquet files from MinIO → append to bronze.traffic"""
+    from etl.bronze_data_layer import load_traffic_to_bronze
+    rows = load_traffic_to_bronze()
+    logger.info("Traffic rows appended to bronze: %d", rows)
 
-    auth = DDWebAuth()
-    auth.ensure_authenticated()
-
-    with get_traffic_engine() as engine:
-        rows = fetch_and_ingest_locations(auth, engine)
-    logger.info(f"Locations loaded: {rows} rows")
-
-
-
-def load_bronze_traffic(**kwargs):
-    from etl.bronze_data_layer import ingest_traffic
-    from utils.db import get_traffic_engine
-
-    with get_traffic_engine() as engine:
-        rows = ingest_traffic(engine)
-    logger.info(f"Traffic rows appended: {rows}")
-    kwargs["ti"].xcom_push(key="rows_added", value=rows)
-
-
-
-def run_bronze_layer(**kwargs):
-    """Load missions, locations and traffic files into bronze tables"""
-    from etl.bronze_data_layer import run_bronze
-    result = run_bronze()
-    logger.info(f"Bronze layer result: {result}")
-    kwargs["ti"].xcom_push(key="new_mission_detected",
-                           value=result["new_mission_detected"])
 
 def run_silver_layer(**kwargs):
     """Clean and enrich bronze data into silver tables"""
@@ -92,11 +53,12 @@ def run_silver_layer(**kwargs):
     from utils.db import get_traffic_engine
     new_mission = kwargs["ti"].xcom_pull(
         key="new_mission_detected",
-        task_ids="run_bronze_layer"
+        task_ids="ingest_ref"
     )
     with get_traffic_engine() as engine:
         result = run_silver(bool(new_mission), engine)
-    logger.info(f"Silver layer result: {result}")
+    logger.info("Silver layer result: %s", result)
+
 
 def run_gold_layer(**kwargs):
     """Run gold aggregation using Monica's gold_data_layer.py"""
@@ -104,7 +66,14 @@ def run_gold_layer(**kwargs):
     from utils.db import get_traffic_engine
     with get_traffic_engine() as engine:
         result = run_gold(engine)
-    logger.info(f"Gold layer result: {result}")
+    logger.info("Gold layer result: %s", result)
+
+
+def run_publish(**kwargs):
+    """Export gold.traffic to MinIO as CSV"""
+    from etl.publish import publish_gold
+    publish_gold()
+    logger.info("Gold data published to MinIO")
 
 
 def publish_gold(**kwargs):
@@ -216,36 +185,22 @@ with DAG(
     tags=["berlin", "traffic", "superset"],
 ) as dag:
 
-    t_missions = PythonOperator(
-        task_id="fetch_and_load_missions",
-        python_callable=fetch_and_load_missions,
-    )
-
-    t_branch = BranchPythonOperator(
-        task_id="branch_on_new_mission",
-        python_callable=branch_on_new_mission,
-    )
-
-    t_locations = PythonOperator(
-        task_id="fetch_and_load_locations",
-        python_callable=fetch_and_load_locations,
-    )
-
-    t_skip_locations = EmptyOperator(
-        task_id="skip_locations",
+    t_ingest_ref = PythonOperator(
+        task_id="ingest_ref",
+        python_callable=run_ingest_ref,
+        execution_timeout=timedelta(minutes=10),
     )
 
     t_ingest_traffic = PythonOperator(
-        task_id="ingest_traffic_files",
-        python_callable=load_bronze_traffic,
-        trigger_rule="none_failed_min_one_success",
-        execution_timeout=timedelta(hours=2),
+        task_id="ingest_traffic",
+        python_callable=run_ingest_traffic,
+        execution_timeout=timedelta(hours=3),
     )
 
-    t_bronze = PythonOperator(
-        task_id="run_bronze_layer",
-        python_callable=run_bronze_layer,
-        execution_timeout=timedelta(hours=2),
+    t_load_traffic = PythonOperator(
+        task_id="load_traffic_to_bronze",
+        python_callable=run_load_traffic_to_bronze,
+        execution_timeout=timedelta(hours=1),
     )
 
     t_silver = PythonOperator(
@@ -257,7 +212,12 @@ with DAG(
     t_gold = PythonOperator(
         task_id="run_gold_layer",
         python_callable=run_gold_layer,
-        trigger_rule="none_failed_min_one_success",
+    )
+
+    t_publish = PythonOperator(
+        task_id="publish_gold",
+        python_callable=run_publish,
+        execution_timeout=timedelta(minutes=30),
     )
 
     t_publish = PythonOperator(
@@ -272,7 +232,6 @@ with DAG(
     )
 
     # ── Dependencies ──────────────────────────────────────────────────────────
-    t_missions >> t_branch
-    t_branch >> [t_locations, t_skip_locations]
-    [t_locations, t_skip_locations] >> t_ingest_traffic
-    t_ingest_traffic >> t_bronze >> t_silver >> t_gold >> t_publish >> t_superset
+    t_ingest_ref >> t_silver
+    t_ingest_traffic >> t_load_traffic >> t_silver
+    t_silver >> t_gold >> t_publish >> t_superset
