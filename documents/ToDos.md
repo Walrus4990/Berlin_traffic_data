@@ -3,8 +3,8 @@ _Last updated: 2026-04-24_
 
 ## P1 — Blocking or data integrity risk
 
-1. Implement `write_tracker()` in `download_mission()` after successful chunk upload — without this portal is hit for all data every weekly run
-2. Audit datetime parsing and timezone handling throughout — verify `parse_date()` output is consistently timezone-aware (Europe/Berlin) across all functions that consume dates: `download_mission()`, `weekly_download()`, `ingest_missions()`, silver join logic
+1. **DONE** Implement `write_tracker()` in `download_mission()` after successful chunk upload — without this portal is hit for all data every weekly run
+2. **DONE** Audit datetime parsing and timezone handling throughout — verify `parse_date()` output is consistently timezone-aware (Europe/Berlin) across all functions that consume dates: `download_mission()`, `weekly_download()`, `ingest_missions()`, silver join logic
 3. NULL speed values in gold — trace back through silver cleaning to source
 4. Remove TEMP mission filter from `weekly_download()` before any prod run
 5. SQL init scripts — confirm bronze/silver/gold schemas and tables are correctly defined in `sql/init/`

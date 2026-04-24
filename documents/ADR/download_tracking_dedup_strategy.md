@@ -25,6 +25,10 @@ Accepted mild duplication risk (one file per DAG run) from concurrent runs — c
 Prevents portal conflicts and tracker race conditions.
 7. Empty file handling
 Two retries with doubling sleep (10s → 20s) before skipping. consecutive_empty_weeks incremented in tracker. Alert email triggered at 3 consecutive empty weeks. Next weekly run naturally covers missed weeks via last_downloaded_to + 1 day.
+8. Tracker update parses filename — format is a contract
+Tracker update in `load_traffic_to_bronze()` parses `mission_id` and `chunk_end` from the filename. Filename format is defined in `_download_into_parquet()` — any change there must be reflected here.
+9. Tracker stores date-only — gap risk is negligible
+`last_downloaded_to` is stored as date-only, parsed from the filename. The portal publishes data in a nightly batch at 03:00 Europe/Berlin — data is otherwise static. DAG runs at 05:00 Europe/Berlin, always after the batch. Resume point is `last_downloaded_to + 1 day 00:00:00`. No intra-day gap risk.
 
 ## Consequences:
 Portal re-hit on bronze ingestion failure (acceptable, rare)

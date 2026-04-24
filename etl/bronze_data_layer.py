@@ -27,7 +27,7 @@ import io
 from utils.db import get_traffic_engine, save, get_loaded_files
 from utils.date import parse_date
 from utils.schema import MISSION_RENAME, LOCATION_RENAME
-from utils.minio import MINIO_CLIENT, MINIO_BUCKET
+from utils.minio import MINIO_CLIENT, MINIO_BUCKET, read_tracker, write_tracker
 from etl.ddweb_auth import DDWebAuth
 from etl.ddweb_ingest_ref import fetch_missions
 from etl.ddweb_ingest_ref import fetch_locations
@@ -158,6 +158,8 @@ def load_traffic_to_bronze() -> int:
     Skips files already loaded — idempotent.
     Returns number of rows appended.
     """
+    tracker = read_tracker()
+
     with get_traffic_engine() as engine:
         objects = MINIO_CLIENT.list_objects(MINIO_BUCKET, prefix="mission_")
         traffic_files = [obj.object_name for obj in objects if obj.object_name.endswith(".parquet")]
@@ -175,6 +177,7 @@ def load_traffic_to_bronze() -> int:
                 logger.info("  Skipping (already loaded): %s", filename)
                 continue
 
+            # save to bronze.traffic
             response = MINIO_CLIENT.get_object(MINIO_BUCKET, filename)
             df = pd.read_parquet(io.BytesIO(response.read()))
             df["source_file"] = filename
@@ -182,6 +185,15 @@ def load_traffic_to_bronze() -> int:
             save(df, "traffic", "bronze", engine)
             total_rows += len(df)
             logger.info("  Loaded %d rows from %s", len(df), filename)
+
+            # update the tracker with files loaded to avoide double downloads at next download
+            parts = filename.replace(".parquet", "").split("_")
+            mission_id = parts[1]
+            chunk_end = parts[3]
+            tracker[mission_id] = {"last_downloaded_to": chunk_end}
+            write_tracker(tracker)
+            logger.info("Tracker updated for mission %s: last_downloaded_to=%s", mission_id, chunk_end)
+
 
         logger.info("Traffic ingestion complete: %d rows appended.", total_rows)
         return total_rows
