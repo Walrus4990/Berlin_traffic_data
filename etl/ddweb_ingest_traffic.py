@@ -20,6 +20,7 @@ import os
 import pandas as pd
 
 from etl.ddweb_auth import DDWebAuth
+from etl.ddweb_ingest_ref import fetch_missions
 from utils.date import parse_date
 from utils.schema import TRAFFIC_COLS_DROP, TRAFFIC_RENAME
 from utils.minio import MINIO_CLIENT, MINIO_BUCKET
@@ -218,7 +219,7 @@ def _download_into_parquet(
     parquet_bytes = buffer.getvalue()
 
     # Upload to MinIO
-    MINIO_CLIENT.put_object(exit
+    MINIO_CLIENT.put_object(
         MINIO_BUCKET,
         filename,
         io.BytesIO(parquet_bytes),
@@ -245,6 +246,9 @@ def download_mission(
     """
 
     chunk_start = _get_chunk_start(mission_id, from_date, tracker)
+    today = datetime.now(tz=pytz.timezone("Europe/Berlin"))
+    chunk_end = min(to_date, today)
+
     chunks = _get_chunks(chunk_start, chunk_end)
     mission_files = []
 
@@ -293,14 +297,19 @@ def complete_download(auth: DDWebAuth, missions_df) -> None:
 
 # --- Loop over active missions only fro weekly download
 
-def weekly_download(auth: DDWebAuth, missions_df) -> None:
+def weekly_download() -> None:
 
     today = datetime.now(tz=pytz.timezone("Europe/Berlin"))
     tracker = read_tracker()
 
+    auth = DDWebAuth()
+    auth.ensure_authenticated()
+    missions_df = fetch_missions(auth)
+
     active_missions = missions_df[
         missions_df["ToDate"].apply(lambda x: parse_date(x) > today)
     ]
+    active_missions = active_missions[active_missions["Id"] == 99511]  # TEMP: test only
 
     logger.info("Weekly download: %s active missions", len(active_missions))
 
