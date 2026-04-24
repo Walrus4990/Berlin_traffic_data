@@ -1,38 +1,32 @@
 """
 bronze.py — Bronze layer ingestion
 ====================================
-Reads parqet files from MinIO and and loads them into
-PostgreSQL bronze schema tables.
+Fetches reference and traffic data and loads into PostgreSQL bronze schema.
 
-Inputs:
-    df_missions  — DataFrame returned by ddweb_ingest_ref.fetch_missions()
-    df_locations — DataFrame returned by ddweb_ingest_ref.fetch_locations()
-    Traffic parquet — files in MinIO written by ddweb_ingest_traffic.py
+Entry points:
+    ingest_ref()              — fetches missions + locations from DDWeb portal
+                                → bronze.mission, bronze.location
+    load_traffic_to_bronze()  — reads parquet files from MinIO
+                                → bronze.traffic
 
 Tables written:
-    bronze.mission   — deployment history, updated when changed
-    bronze.location  — location reference, full reload each run
-    bronze.traffic   — weekly append of raw sensor passage rows
-
-Entry point: run_bronze(df_missions, df_locations)
-Returns:     dict with "new_mission_detected" (bool) and row counts
+    bronze.mission   — deployment history, append new rows only
+    bronze.location  — location reference, full reload for now (see TODO)
+    bronze.traffic   — weekly append of raw sensor rows
 """
 
 from __future__ import annotations
 import logging
 import warnings
-from pathlib import Path
-import os
 import pandas as pd
 from sqlalchemy.engine import Engine
 from sqlalchemy import text
 from typing import Set, Tuple
 import io
-import re
 
 from utils.db import get_traffic_engine, save, get_loaded_files
 from utils.date import parse_date
-from utils.schema import MISSION_RENAME, LOCATION_RENAME, TRAFFIC_COLS_DROP, TRAFFIC_RENAME
+from utils.schema import MISSION_RENAME, LOCATION_RENAME
 from utils.minio import MINIO_CLIENT, MINIO_BUCKET
 from etl.ddweb_auth import DDWebAuth
 from etl.ddweb_ingest_ref import fetch_missions
@@ -55,7 +49,7 @@ def _table_exists(engine: Engine, table: str, schema: str = "bronze") -> bool:
         ).scalar()
 
 
-def _get_existing_mission_ids(engine: Engine) -> Set[Tuple]:
+def _get_existing_mission_ids(engine: Engine) -> set:
 
     if not _table_exists(engine, "mission"):
         return set()
@@ -68,10 +62,10 @@ def _get_existing_mission_ids(engine: Engine) -> Set[Tuple]:
 
 # Bronze layer functions
 
-def fetch_and_ingest_missions(auth: DDWebAuth, engine: Engine) -> tuple[bool, int]:
+def ingest_missions(auth: DDWebAuth, engine: Engine) -> tuple[bool, int]:
     """
     Fetch missions from DDWeb and load into bronze.mission.
-    Only inserts rows whose (device_id, start_date) key is new.
+    Only inserts rows whose (mission_id) key is new.
 
     Returns:
         (new_mission_detected, rows_added)
@@ -97,7 +91,7 @@ def fetch_and_ingest_missions(auth: DDWebAuth, engine: Engine) -> tuple[bool, in
     return True, len(truly_new)
 
 
-def fetch_and_ingest_locations(auth: DDWebAuth, engine: Engine) -> int:
+def ingest_locations(auth: DDWebAuth, engine: Engine) -> int:
     """
     Fetch locations from DDWeb and fully replace bronze.location.
     Returns number of rows written.
@@ -120,55 +114,16 @@ def fetch_and_ingest_locations(auth: DDWebAuth, engine: Engine) -> int:
     return len(df)
 
 
-def ingest_traffic(engine: Engine) -> int:
+
+def ingest_ref() -> dict:
     """
-    List all parquet objects in MinIO bucket
-    Skips files whose source_file name already exists in bronze.traffic -> idempotent
-    Returns number of rows appended.
-    """
+    Full bronze ingestion run for reference files — authenticates with DDWeb, then:
 
-    objects = MINIO_CLIENT.list_objects(MINIO_BUCKET, prefix="mission_")
-    traffic_files = [obj.object_name for obj in objects if obj.object_name.endswith(".parquet")]
-
-    if not traffic_files:
-        logger.warning("No parquet files found in MinIO bucket %s", MINIO_BUCKET)
-        return 0
-
-    # Check what's already loaded
-    already_loaded = get_loaded_files(engine, "bronze", "traffic")
-
-    total_rows = 0
-    for filename in traffic_files:
-        if filename in already_loaded:
-            logger.info("  Skipping (already loaded): %s", filename)
-            continue
-
-        response = MINIO_CLIENT.get_object(MINIO_BUCKET, filename)
-        df = pd.read_parquet(io.BytesIO(response.read()))
-        df["source_file"] = filename
-        df["ingested_at"] = pd.Timestamp.now()
-        save(df, "traffic", "bronze", engine)
-        total_rows += len(df)
-        logger.info("  Loaded %d rows from %s", len(df), filename)
-
-    logger.info("Traffic ingestion complete: %d rows appended.", total_rows)
-    return total_rows
-
-
-def run_bronze() -> dict:
-    """
-    Full bronze ingestion run — authenticates with DDWeb, fetches missions and
-    locations, then loads all three bronze tables.
-
-    Steps:
-        1. Authenticate once with DDWeb portal
-        2. Fetch missions → compare to bronze.mission → detect new missions
-        3. Fetch locations → full-replace bronze.location
-        4. Load *new* traffic *xlsx* from DOWNLOAD_DIR → append to bronze.traffic
+        1. fetches missions
+        2. if new mission detected fetch location → full-replace bronze.location (for now)
 
     Returns dict:
         new_mission_detected   bool
-        rows_ingested          int   traffic rows appended to bronze.traffic
         mission_rows_added     int   new rows in bronze.mission
         location_rows_written  int   rows in bronze.location after refresh
     """
@@ -179,19 +134,54 @@ def run_bronze() -> dict:
 
     with get_traffic_engine() as engine:
         # Step 1 — Missions
-        new_mission_detected, mission_rows_added = fetch_and_ingest_missions(auth, engine)
+        new_mission_detected, mission_rows_added = ingest_missions(auth, engine)
 
-        # Step 2 — Locations
-        location_rows = fetch_and_ingest_locations(auth, engine)
-
-        # Step 3 — Traffic
-        #rows_ingested = ingest_traffic(engine) Traffic ingestion handled by t_ingest_traffic task upstream
+        # Step 2 — Locations (only if new mission detected)
+        if new_mission_detected:
+            location_rows = ingest_locations(auth, engine)
+        else:
+            location_rows = 0
+            logger.info("No new mission — skipping location fetch.")
 
     result = {
         "new_mission_detected":  new_mission_detected,
-        "rows_ingested":         0,         #handled upstream
         "mission_rows_added":    mission_rows_added,
         "location_rows_written": location_rows,
     }
     logger.info("=== BRONZE LAYER DONE: %s ===", result)
     return result
+
+
+def load_traffic_to_bronze() -> int:
+    """
+    List new parquet files from MinIO and append to bronze.traffic.
+    Skips files already loaded — idempotent.
+    Returns number of rows appended.
+    """
+    with get_traffic_engine() as engine:
+        objects = MINIO_CLIENT.list_objects(MINIO_BUCKET, prefix="mission_")
+        traffic_files = [obj.object_name for obj in objects if obj.object_name.endswith(".parquet")]
+
+        if not traffic_files:
+            logger.warning("No parquet files found in MinIO bucket %s", MINIO_BUCKET)
+            return 0
+
+        # Check what's already loaded
+        already_loaded = get_loaded_files(engine, "bronze", "traffic")
+
+        total_rows = 0
+        for filename in traffic_files:
+            if filename in already_loaded:
+                logger.info("  Skipping (already loaded): %s", filename)
+                continue
+
+            response = MINIO_CLIENT.get_object(MINIO_BUCKET, filename)
+            df = pd.read_parquet(io.BytesIO(response.read()))
+            df["source_file"] = filename
+            df["ingested_at"] = pd.Timestamp.now()
+            save(df, "traffic", "bronze", engine)
+            total_rows += len(df)
+            logger.info("  Loaded %d rows from %s", len(df), filename)
+
+        logger.info("Traffic ingestion complete: %d rows appended.", total_rows)
+        return total_rows
