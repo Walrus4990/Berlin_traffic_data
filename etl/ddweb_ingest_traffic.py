@@ -307,7 +307,7 @@ def weekly_download() -> None:
     active_missions = missions_df[
         missions_df["ToDate"].apply(lambda x: parse_date(x) > today)
     ]
-    active_missions = active_missions[active_missions["Id"].isin([99511, 99512])]  # TEMP: test only
+    active_missions = active_missions[active_missions["Id"].isin([99511, 99512, 99514, 99516, 69501])]  # TEMP: test only
 
     logger.info("Weekly download: %s active missions", len(active_missions))
 
