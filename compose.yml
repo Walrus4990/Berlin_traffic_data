@@ -40,7 +40,7 @@ services:
       retries: 5
     volumes:
       - postgres-data-quality:/var/lib/postgresql/data
-      #- ./sql/init/:/docker-entrypoint-initdb.d/ DOES NOT EXIST YET; CAN WE SPECIFY SCHEMAS LATER?
+      - ./sql/init:dq/:/docker-entrypoint-initdb.d/
     ports:
       - "5433:5432" #check if I actually need this Docker services on the same network talk to each other, only add if i need to look at the data
     profiles: [local, full]
@@ -61,7 +61,7 @@ services:
       - postgres-airflow-data:/var/lib/postgresql/data
     ports:
       - "5434:5432"
-    mem_limit: 512m   
+    mem_limit: 512m
     profiles: [full, test]
 
 # ---------- Airflow

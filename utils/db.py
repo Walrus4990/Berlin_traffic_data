@@ -53,20 +53,6 @@ def save(df: pd.DataFrame, table_name: str, schema: str, engine) -> None:
         raise
 
 
-# ---function to identify duplicate rows in SQL table
-
-def get_loaded_files(engine: Engine, schema: str, table: str) -> set:
-    """Returns the filenames previously loaded into SQL database"""
-    try:
-        with engine.connect() as conn:
-            rows = conn.execute(
-                text(f"SELECT DISTINCT source_file FROM {schema}.{table}")
-            ).fetchall()
-            return {r[0] for r in rows}
-    except Exception:
-        return set()  # table doesn't exist yet on first run
-
-
 def save_qa_report(qa: dict, layer: str, dq_engine: Engine) -> None:
     """Persist QA metrics to postgres-dq public.qa_runs (one row per metric)."""
     run_at = pd.Timestamp.now()
@@ -84,3 +70,17 @@ def save_qa_report(qa: dict, layer: str, dq_engine: Engine) -> None:
         """))
     df.to_sql("qa_runs", dq_engine, schema="public", if_exists="append", index=False)
     logger.info("QA report persisted to postgres-dq: %d metrics for layer=%s", len(rows), layer)
+
+
+# ---function to identify duplicate rows in SQL table
+
+def get_loaded_files(engine: Engine, schema: str, table: str) -> set:
+    """Returns the filenames previously loaded into SQL database"""
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(f"SELECT DISTINCT source_file FROM {schema}.{table}")
+            ).fetchall()
+            return {r[0] for r in rows}
+    except Exception:
+        return set()  # table doesn't exist yet on first run

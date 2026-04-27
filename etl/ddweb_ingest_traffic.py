@@ -62,7 +62,7 @@ WEEKDAYS = 7
 
 # --- Chunking
 
-def _get_chunk_start(mission_id: int, from_date: datetime, tracker: dict) -> datetime:
+def get_chunk_start(mission_id: int, from_date: datetime, tracker: dict) -> datetime:
     entry = tracker.get(str(mission_id))
     if entry and entry.get("last_downloaded_to"):
         last = datetime.strptime(entry["last_downloaded_to"], "%Y-%m-%d")
@@ -71,7 +71,7 @@ def _get_chunk_start(mission_id: int, from_date: datetime, tracker: dict) -> dat
     return from_date
 
 
-def _get_chunks(from_date: datetime, to_date: datetime) -> list[tuple[datetime, datetime]]:
+def get_chunks(from_date: datetime, to_date: datetime) -> list[tuple[datetime, datetime]]:
     if (to_date - from_date).days <= 31: #if the dowload timeframe is smaller than the portal limit,no chunking
         return [(from_date, to_date)]
 
@@ -242,11 +242,11 @@ def download_mission(
     Loop runs over whatever _get_chunks() returns
     """
 
-    chunk_start = _get_chunk_start(mission_id, from_date, tracker)
+    chunk_start = get_chunk_start(mission_id, from_date, tracker)
     today = datetime.now(tz=pytz.timezone("Europe/Berlin"))
     chunk_end = min(to_date, today)
 
-    chunks = _get_chunks(chunk_start, chunk_end)
+    chunks = get_chunks(chunk_start, chunk_end)
     mission_files = []
 
     for chunk_start, chunk_end in chunks:
@@ -274,10 +274,15 @@ def download_mission(
 
 # --- Loop over all missions for initial complete download
 
-def complete_download(auth: DDWebAuth, missions_df) -> None:
+def complete_download() -> None:
 
-    tracker = read_tracker()
+
     today = datetime.now(tz=pytz.timezone("Europe/Berlin"))
+    tracker = read_tracker()
+
+    auth = DDWebAuth()
+    auth.ensure_authenticated()
+    missions_df = fetch_missions(auth)
 
     logger.info("Initial download: %s missions total", len(missions_df))
 

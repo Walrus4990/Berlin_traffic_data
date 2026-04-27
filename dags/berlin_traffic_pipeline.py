@@ -1,5 +1,5 @@
 """
-Berlin Traffic Pipeline DAG
+Templehof Schöneberg Traffic Pipeline DAG
 Weekly orchestration: ingest → bronze → silver → gold → Superset refresh
 """
 from airflow import DAG
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # ── Default args ──────────────────────────────────────────────────────────────
 default_args = {
-    "owner": "berlin",
+    "owner": "ts",
     "retries": 1,
     "retry_delay": timedelta(minutes=5),
 }
@@ -39,6 +39,11 @@ def run_load_traffic_to_bronze(**kwargs):
     from etl.bronze_data_layer import load_traffic_to_bronze
     rows = load_traffic_to_bronze()
     logger.info("Traffic rows appended to bronze: %d", rows)
+
+def run_validate_bronze(**kwargs):
+    from tests.test_ingest import check_bronze_completeness
+    result = check_bronze_completeness("weekly")
+    logger.info("Validation result: %s", result)
 
 
 def run_silver_layer(**kwargs):
@@ -168,6 +173,12 @@ with DAG(
         execution_timeout=timedelta(hours=1),
     )
 
+    t_validate_bronze = PythonOperator(
+        task_id="validate_bronze",
+        python_callable=run_validate_bronze,
+        execution_timeout=timedelta(minutes=30),
+    )
+
     t_silver = PythonOperator(
         task_id="run_silver_layer",
         python_callable=run_silver_layer,
@@ -194,4 +205,5 @@ with DAG(
     # ── Dependencies ──────────────────────────────────────────────────────────
     t_ingest_ref >> t_silver
     t_ingest_traffic >> t_load_traffic >> t_silver
+    t_load_traffic >> t_validate_bronze
     t_silver >> t_gold >> t_publish >> t_superset
