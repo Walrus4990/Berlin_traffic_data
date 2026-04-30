@@ -3,7 +3,6 @@
 from etl.ddweb_auth import DDWebAuth
 import pandas as pd
 import logging
-from utils.db import get_traffic_engine, save
 
 logger = logging.getLogger(__name__)        # python error logging integrates with Airflow
 

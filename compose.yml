@@ -1,192 +1,147 @@
-
-x-common: &common           #anchor to avoid repeating restart and networks
-  restart: on-failure
+x-common: &common
+  restart: unless-stopped
   networks:
     - traffic-net
 
-services:
+x-airflow-common-env: &airflow-common-env
+  AIRFLOW__CORE__EXECUTOR: LocalExecutor
+  AIRFLOW__DEBUG__FAIL_FAST: "true"
+  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_AIRFLOW_USER}:${POSTGRES_AIRFLOW_PASSWORD}@postgres-airflow:5432/${POSTGRES_AIRFLOW_DB}
+  AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+  AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY} # RAM savers — remove in prod
+  AIRFLOW__CORE__PARALLELISM: "1"
+  AIRFLOW__CORE__DAG_CONCURRENCY: "1"
+  # # Traffic DB connection
+  AIRFLOW_CONN_POSTGRES_TRAFFIC: postgresql://${POSTGRES_TRAFFIC_USER}:${POSTGRES_TRAFFIC_PASSWORD}@postgres-traffic:5432/${POSTGRES_TRAFFIC_DB}
+  # # DQ DB connection
+  AIRFLOW_CONN_POSTGRES_DQ: postgresql://${POSTGRES_DQ_USER}:${POSTGRES_DQ_PASSWORD}@postgres-dq:5432/${POSTGRES_DQ_DB}
+  # MinIO
+  MINIO_ENDPOINT: minio:9000
+  MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+  MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+  MINIO_BUCKET: ${MINIO_BUCKET}
+  # External API
+  DDWEB_EMAIL: ${DDWEB_EMAIL}
+  DDWEB_PASSWORD: ${DDWEB_PASSWORD}
+  # Python
+  PYTHONPATH: /opt/airflow
+  DOWNLOAD_DIR: /opt/airflow/data/raw
 
-#-------------PostgreSQL traffic database
+x-airflow-volumes: &airflow-volumes
+  - ./dags/:/opt/airflow/dags/
+  - ./etl/:/opt/airflow/etl/
+  - ./utils/:/opt/airflow/utils/
+  - ./tests/:/opt/airflow/tests/
+  - ./sql/:/opt/airflow/sql/
+  - ./data/:/opt/airflow/data/
+
+x-airflow-build: &airflow-build
+  build:
+    context: .
+    dockerfile: Dockerfile.airflow
+
+services:
+  # ---------- PostgreSQL: traffic
   postgres-traffic:
     <<: *common
     image: postgres:14
     environment:
-      - POSTGRES_DB=$POSTGRES_TRAFFIC_DB
-      - POSTGRES_PASSWORD=$POSTGRES_TRAFFIC_PASSWORD
-      - POSTGRES_USER=$POSTGRES_TRAFFIC_USER
+      POSTGRES_DB: ${POSTGRES_TRAFFIC_DB}
+      POSTGRES_PASSWORD: ${POSTGRES_TRAFFIC_PASSWORD}
+      POSTGRES_USER: ${POSTGRES_TRAFFIC_USER}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $POSTGRES_TRAFFIC_USER -d $POSTGRES_TRAFFIC_DB"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_TRAFFIC_USER} -d ${POSTGRES_TRAFFIC_DB}"]
       interval: 10s
       retries: 5
     volumes:
       - postgres-traffic-data:/var/lib/postgresql/data
       - ./sql/init/:/docker-entrypoint-initdb.d/
     ports:
-      - "5431:5432" #check if I actually need this Docker services on the same network talk to each other, only add if i need to look at the data
+      - "5431:5432"
     mem_limit: 512m
-    profiles: [local, full, test]
 
-#-------------PostgreSQL data quality database
+  # ---------- PostgreSQL: data quality
   postgres-dq:
     <<: *common
     image: postgres:14
     environment:
-      - POSTGRES_DB=$POSTGRES_DQ_DB
-      - POSTGRES_PASSWORD=$POSTGRES_DQ_PASSWORD
-      - POSTGRES_USER=$POSTGRES_DQ_USER
+      POSTGRES_DB: ${POSTGRES_DQ_DB}
+      POSTGRES_PASSWORD: ${POSTGRES_DQ_PASSWORD}
+      POSTGRES_USER: ${POSTGRES_DQ_USER}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $POSTGRES_DQ_USER -d $POSTGRES_DQ_DB"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_DQ_USER} -d ${POSTGRES_DQ_DB}"]
       interval: 10s
       retries: 5
     volumes:
       - postgres-data-quality:/var/lib/postgresql/data
-      #- ./sql/init/:/docker-entrypoint-initdb.d/ DOES NOT EXIST YET; CAN WE SPECIFY SCHEMAS LATER?
+      - ./sql/init_dq/:/docker-entrypoint-initdb.d/
     ports:
-      - "5433:5432" #check if I actually need this Docker services on the same network talk to each other, only add if i need to look at the data
-    profiles: [local, full]
+      - "5433:5432"
 
-#-------------PostgreSQL Airflow metadata
+  # ---------- PostgreSQL: Airflow metadata
   postgres-airflow:
     <<: *common
     image: postgres:14
     environment:
-      - POSTGRES_DB=$POSTGRES_AIRFLOW_DB
-      - POSTGRES_PASSWORD=$POSTGRES_AIRFLOW_PASSWORD
-      - POSTGRES_USER=$POSTGRES_AIRFLOW_USER
+      POSTGRES_DB: ${POSTGRES_AIRFLOW_DB}
+      POSTGRES_PASSWORD: ${POSTGRES_AIRFLOW_PASSWORD}
+      POSTGRES_USER: ${POSTGRES_AIRFLOW_USER}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $POSTGRES_AIRFLOW_USER -d $POSTGRES_AIRFLOW_DB"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_AIRFLOW_USER} -d ${POSTGRES_AIRFLOW_DB}"]
       interval: 10s
       retries: 5
     volumes:
       - postgres-airflow-data:/var/lib/postgresql/data
     ports:
       - "5434:5432"
-    mem_limit: 512m   
-    profiles: [full, test]
+    mem_limit: 512m
 
-# ---------- Airflow
+  # ---------- Airflow init (one-shot)
   airflow-init:
-    image: apache/airflow:2.7.0
+    <<: *airflow-build
     networks:
-    - traffic-net
+      - traffic-net
     depends_on:
       postgres-airflow:
-        condition: service_healthy    #better to add healthy condition for one shot initialisation
+        condition: service_healthy
     environment:
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://$POSTGRES_AIRFLOW_USER:$POSTGRES_AIRFLOW_PASSWORD@postgres-airflow:5432/$POSTGRES_AIRFLOW_DB
-    command: |
-      bash -c "airflow db init && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com"
-    profiles: [full, test]
+      <<: *airflow-common-env
+    command: bash -c "airflow db init && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com"
 
+  # ---------- Airflow scheduler
   scheduler:
-    <<: *common
-    build:
-      context: .
-      dockerfile: Dockerfile.airflow
+    <<: [*common, *airflow-build]
     depends_on:
-       airflow-init:
-         condition: service_completed_successfully
-       postgres-airflow:
-         condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+      postgres-airflow:
+        condition: service_healthy
+    environment:
+      <<: *airflow-common-env
+    command: scheduler
+    volumes: *airflow-volumes
     healthcheck:
       test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__DEBUG__FAIL_FAST=true
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://$POSTGRES_AIRFLOW_USER:$POSTGRES_AIRFLOW_PASSWORD@postgres-airflow:5432/$POSTGRES_AIRFLOW_DB
-      - AIRFLOW__CORE__LOAD_EXAMPLES=false
-      - AIRFLOW_CONN_POSTGRES_TRAFFIC=postgresql://traffic:traffic@postgres-traffic:5432/berlin_traffic
-      - AIRFLOW__WEBSERVER__SECRET_KEY=berlin_traffic_secret
-
-      - POSTGRES_TRAFFIC_HOST=postgres-traffic
-      - POSTGRES_TRAFFIC_PORT=5432
-      - POSTGRES_TRAFFIC_USER=${POSTGRES_TRAFFIC_USER}
-      - POSTGRES_TRAFFIC_PASSWORD=${POSTGRES_TRAFFIC_PASSWORD}
-      - POSTGRES_TRAFFIC_DB=${POSTGRES_TRAFFIC_DB}
-
-      - POSTGRES_DQ_HOST=postgres-dq
-      - POSTGRES_DQ_PORT=5432
-      - POSTGRES_DQ_USER=${POSTGRES_DQ_USER}
-      - POSTGRES_DQ_PASSWORD=${POSTGRES_DQ_PASSWORD}
-      - POSTGRES_DQ_DB=${POSTGRES_DQ_DB}
-
-      - DDWEB_EMAIL=${DDWEB_EMAIL}
-      - DDWEB_PASSWORD=${DDWEB_PASSWORD}
-
-      - PYTHONPATH=/opt/airflow
-
-      - DOWNLOAD_DIR=/opt/airflow/data/raw
-
-      - AIRFLOW__CORE__PARALLELISM=1        #conserver RAM delete in prod
-      - AIRFLOW__CORE__DAG_CONCURRENCY=1    #conserve RAM delete in prod
-
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
-      - MINIO_BUCKET=${MINIO_BUCKET}
-
-    command: scheduler
-    volumes:
-      - ./dags/:/opt/airflow/dags/
-      - ./etl/:/opt/airflow/etl/
-      - ./utils/:/opt/airflow/utils/
-      - ./requirements.txt:/requirements.txt
-      - ./sql/:/opt/airflow/sql/
-      - ./data/:/opt/airflow/data/
-    tty: true
-    stdin_open: true
     mem_limit: 1500m
-    profiles: [full, test]
 
-  webserver:  #this is for prod environment to check the DAG is running correctly, debug, troubleshoot etc. will not be run in final prod
-    <<: *common
-    build:
-      context: .
-      dockerfile: Dockerfile.airflow
+  # ---------- Airflow webserver
+  webserver:
+    <<: [*common, *airflow-build]
     depends_on:
       airflow-init:
-         condition: service_completed_successfully
+        condition: service_completed_successfully
       postgres-airflow:
-         condition: service_healthy
+        condition: service_healthy
       scheduler:
-         condition: service_started
+        condition: service_started
     environment:
-      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__DEBUG__FAIL_FAST=true
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://$POSTGRES_AIRFLOW_USER:$POSTGRES_AIRFLOW_PASSWORD@postgres-airflow:5432/$POSTGRES_AIRFLOW_DB
-      - AIRFLOW_CONN_POSTGRES_TRAFFIC=postgresql://traffic:traffic@postgres-traffic:5432/berlin_traffic
-      - AIRFLOW__WEBSERVER__SECRET_KEY=berlin_traffic_secret
-
-      - POSTGRES_TRAFFIC_HOST=postgres-traffic
-      - POSTGRES_TRAFFIC_PORT=5432
-      - POSTGRES_TRAFFIC_USER=${POSTGRES_TRAFFIC_USER}
-      - POSTGRES_TRAFFIC_PASSWORD=${POSTGRES_TRAFFIC_PASSWORD}
-      - POSTGRES_TRAFFIC_DB=${POSTGRES_TRAFFIC_DB}
-
-      - PYTHONPATH=/opt/airflow
-
-      - DDWEB_EMAIL=${DDWEB_EMAIL}
-      - DDWEB_PASSWORD=${DDWEB_PASSWORD}
-
-      - DOWNLOAD_DIR=/opt/airflow/data/raw
-
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
-      - MINIO_BUCKET=${MINIO_BUCKET}
-
+      <<: *airflow-common-env
     command: webserver
-    volumes:
-      - ./dags/:/opt/airflow/dags/
-      - ./etl/:/opt/airflow/etl/
-      - ./utils/:/opt/airflow/utils/
-      - ./requirements.txt:/requirements.txt
-      - ./sql/:/opt/airflow/sql/
-      - ./data/:/opt/airflow/data/
+    volumes: *airflow-volumes
     ports:
       - "8080:8080"
     healthcheck:
@@ -195,36 +150,29 @@ services:
       timeout: 30s
       retries: 3
       start_period: 60s
-    tty: true
-    stdin_open: true
     mem_limit: 1000m
-    profiles: [full, test]
 
-
-# ---------- MinIO
-
+  # ---------- MinIO
   minio:
     <<: *common
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
-    environment:
-      - MINIO_ROOT_USER=$MINIO_ROOT_USER
-      - MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD
     volumes:
       - minio-data:/data
     ports:
       - "9000:9000"
       - "9001:9001"
     command: server /data --console-address ":9001"
-    profiles: [full]
 
-
-# -------- Superset
+  # ---------- Superset
   superset:
     <<: *common
     build:
@@ -233,23 +181,20 @@ services:
     depends_on:
       postgres-traffic:
         condition: service_healthy
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8088/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
-    environment:
-      - SUPERSET_SECRET_KEY=$SUPERSET_SECRET_KEY
     volumes:
       - superset-data:/app/superset_home
       - ./dashboard/:/app/superset_home/exports/
     ports:
       - "8089:8088"
-    command: |
-      bash -c "superset db upgrade && superset fab create-admin --username ${SUPERSET_ADMIN_USER} --firstname Admin --lastname Admin --email admin@example.com --password ${SUPERSET_ADMIN_PASSWORD} && superset init && superset run -h 0.0.0.0 -p 8088"
-    profiles: [local, full]
-
+    command: bash -c "superset db upgrade && superset fab create-admin --username ${SUPERSET_ADMIN_USER} --firstname Admin --lastname Admin --email admin@example.com --password ${SUPERSET_ADMIN_PASSWORD} && superset init && superset run -h 0.0.0.0 -p 8088"
 
 volumes:
   postgres-traffic-data:
