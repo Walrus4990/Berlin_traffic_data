@@ -492,8 +492,8 @@ def run_silver(new_mission_detected: bool, engine: Engine) -> dict:
 
     # Persist to postgres-dq
     try:
-        with get_dq_engine() as dq_engine:
-            save_qa_report(qa, layer="silver", dq_engine=dq_engine)
+        dq_engine = get_dq_engine()
+        save_qa_report(qa, layer="silver", dq_engine=dq_engine)
     except Exception as exc:
         logger.warning("Could not persist QA report to postgres-dq: %s", exc)
 
