@@ -12,7 +12,6 @@ import calendar
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 import pytz
-from minio import Minio
 import io
 import requests
 import os
@@ -22,7 +21,8 @@ from etl.ddweb_auth import DDWebAuth
 from etl.ddweb_ingest_ref import fetch_missions
 from utils.date import parse_date
 from utils.schema import TRAFFIC_COLS_DROP, TRAFFIC_RENAME
-from utils.minio import MINIO_CLIENT, MINIO_BUCKET, read_tracker
+from utils.minio import get_minio_client, MINIO_BUCKET, read_tracker
+from utils.db import get_dq_engine, save
 
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ WEEKDAYS = 7
 def get_chunk_start(mission_id: int, from_date: datetime, tracker: dict) -> datetime:
     entry = tracker.get(str(mission_id))
     if entry and entry.get("last_downloaded_to"):
-        last = datetime.strptime(entry["last_downloaded_to"], "%Y-%m-%d")
+        last = datetime.strptime(entry["last_downloaded_to"], "%Y%m%d")
         last = pytz.timezone("Europe/Berlin").localize(last)
         return last + timedelta(days=1)
     return from_date
@@ -90,6 +90,19 @@ def get_chunks(from_date: datetime, to_date: datetime) -> list[tuple[datetime, d
 
     return chunks
 
+# TODO: engine created on every call — refactor to create once in download_mission() and pass as parameter
+def _write_chunk_event(mission_id, chunk_start, chunk_end, status, reason):
+    """helper to record error messages of failed downloads"""
+    row = pd.DataFrame([{
+        "run_at": pd.Timestamp.now(tz="Europe/Berlin"),
+        "mission_id": str(mission_id),
+        "segment_start": chunk_start.date(),
+        "segment_end": chunk_end.date(),
+        "status": status,
+        "reason": reason,
+    }])
+    dq_engine = get_dq_engine()
+    save(row, "chunk_download_events", "bronze", dq_engine)
 
 # --- Build payload to pass parametres to DDWEB portal
 
@@ -202,8 +215,10 @@ def _download_into_parquet(
 
     # Convert xlsx bytes → DataFrame → parquet bytes in memory
     df = pd.read_excel(io.BytesIO(response.content))
+
     if df.empty:
         logger.warning("No data for mission %s chunk %s-%s, skipping upload", mission_id, chunk_start, chunk_end)
+        _write_chunk_event(mission_id, chunk_start, chunk_end, "empty", None)
         return None
 
     df = df.drop(columns=TRAFFIC_COLS_DROP, errors="ignore")
@@ -216,7 +231,7 @@ def _download_into_parquet(
     parquet_bytes = buffer.getvalue()
 
     # Upload to MinIO
-    MINIO_CLIENT.put_object(
+    get_minio_client().put_object(
         MINIO_BUCKET,
         filename,
         io.BytesIO(parquet_bytes),
@@ -265,6 +280,7 @@ def download_mission(
 
         except Exception as e:
             logger.error("Mission %s chunk %s-%s failed: %s", mission_id, chunk_start.date(), chunk_end.date(), e)
+            _write_chunk_event(mission_id, chunk_start, chunk_end, "failed", str(e))
             continue
         finally:
             time.sleep(20)      #ensure requesst come at human scale
@@ -275,7 +291,6 @@ def download_mission(
 # --- Loop over all missions for initial complete download
 
 def complete_download() -> None:
-
 
     today = datetime.now(tz=pytz.timezone("Europe/Berlin"))
     tracker = read_tracker()

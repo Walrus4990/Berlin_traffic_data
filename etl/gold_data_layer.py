@@ -172,7 +172,7 @@ def run_gold(engine: Engine) -> dict:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    with get_traffic_engine() as engine:
-        result = run_gold(engine)
+    engine= get_traffic_engine()
+    result = run_gold(engine)
     for k, v in result.items():
         print(f"  {k:<22} {v:>8,}")
