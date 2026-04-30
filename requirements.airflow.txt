@@ -11,3 +11,4 @@ python-dotenv==1.0.1
 numpy==1.24.4
 pyarrow==11.0.0
 minio
+apache-airflow-providers-postgres==5.7.1

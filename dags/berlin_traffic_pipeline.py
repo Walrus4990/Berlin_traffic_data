@@ -54,8 +54,8 @@ def run_silver_layer(**kwargs):
         key="new_mission_detected",
         task_ids="ingest_ref"
     )
-    with get_traffic_engine() as engine:
-        result = run_silver(bool(new_mission), engine)
+    engine = get_traffic_engine()
+    result = run_silver(bool(new_mission), engine)
     logger.info("Silver layer result: %s", result)
 
 
@@ -63,8 +63,8 @@ def run_gold_layer(**kwargs):
     """Run gold aggregation using Monica's gold_data_layer.py"""
     from etl.gold_data_layer import run_gold
     from utils.db import get_traffic_engine
-    with get_traffic_engine() as engine:
-        result = run_gold(engine)
+    engine= get_traffic_engine()
+    result = run_gold(engine)
     logger.info("Gold layer result: %s", result)
 
 
@@ -98,8 +98,10 @@ def refresh_superset(**kwargs):
     headers["Referer"] = base
 
    # ---------------- DB connection ----------------
-    with get_traffic_engine() as engine:
-        sqlalchemy_uri = str(engine.url)
+    # TODO: replace with env var — get_traffic_engine() should not be used to extract URI
+
+    engine= get_traffic_engine()
+    sqlalchemy_uri = str(engine.url)
 
     dbs = session.get(f"{base}/api/v1/database/", headers=headers).json()
 
