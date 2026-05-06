@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # ── Default args ──────────────────────────────────────────────────────────────
 default_args = {
     "owner": "ts",
-    "retries": 1,
+    "retries": 0,
     "retry_delay": timedelta(minutes=5),
 }
 
@@ -184,7 +184,7 @@ with DAG(
     t_silver = PythonOperator(
         task_id="run_silver_layer",
         python_callable=run_silver_layer,
-        execution_timeout=timedelta(hours=1),
+        execution_timeout=timedelta(hours=4),
     )
 
     t_gold = PythonOperator(

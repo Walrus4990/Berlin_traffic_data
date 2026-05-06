@@ -22,7 +22,7 @@ import pandas as pd
 from sqlalchemy.engine import Engine
 from sqlalchemy import text
 
-from utils.db import get_loaded_files, get_dq_engine, save_qa_report
+from utils.db import get_loaded_files, get_dq_engine, save
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -417,59 +417,71 @@ def run_silver(new_mission_detected: bool, engine: Engine) -> dict:
     logger.info(msg)
     print(msg, flush=True)
 
-    # Process and write one chunk at a time — avoids loading full table into RAM
-    for chunk in pd.read_sql(query, engine, chunksize=50000):
-        if chunk.empty:
-            continue
+    # Process and write one chunk at a time — server-side cursor streams rows from postgres
+    # avoids loading full 39M row result set into RAM before chunking
+    raw_conn = engine.raw_connection()
+    try:
+        cursor = raw_conn.cursor("silver_chunk_cursor")
+        cursor.execute(query)
+        columns = None
+        while True:
+            rows = cursor.fetchmany(50000)
+            if columns is None:
+                columns = [desc[0] for desc in cursor.description]
+            chunk = pd.DataFrame(rows, columns=columns)
 
-        chunk = step_parse_timestamps(chunk)
-        qa["unparseable_timestamp"] += int(chunk["flag_unparseable_timestamp"].sum())
+            chunk = step_parse_timestamps(chunk)
+            qa["unparseable_timestamp"] += int(chunk["flag_unparseable_timestamp"].sum())
 
-        if new_mission_detected:
-            chunk = step_flag_unknown_device(chunk, known_ids)
-            qa["unknown_device"] += int(chunk["flag_unknown_device"].sum())
+            if new_mission_detected:
+                chunk = step_flag_unknown_device(chunk, known_ids)
+                qa["unknown_device"] += int(chunk["flag_unknown_device"].sum())
 
-            chunk = step_flag_outside_window(chunk, windows)
-            qa["outside_deployment_window"] += int(chunk["flag_outside_deployment_window"].sum())
+                chunk = step_flag_outside_window(chunk, windows)
+                qa["outside_deployment_window"] += int(chunk["flag_outside_deployment_window"].sum())
 
-            chunk = step_flag_ambiguous_location(chunk, df_active_mission)
-            qa["ambiguous_location"] += int(chunk["flag_ambiguous_location"].sum())
-        else:
-            chunk["flag_unknown_device"]            = False
-            chunk["flag_outside_deployment_window"] = False
-            chunk["flag_ambiguous_location"]        = False
+                chunk = step_flag_ambiguous_location(chunk, df_active_mission)
+                qa["ambiguous_location"] += int(chunk["flag_ambiguous_location"].sum())
+            else:
+                chunk["flag_unknown_device"]            = False
+                chunk["flag_outside_deployment_window"] = False
+                chunk["flag_ambiguous_location"]        = False
 
-        chunk = step_flag_unclassifiable(chunk)
-        qa["unclassifiable"] += int(chunk["flag_unclassifiable"].sum())
+            chunk = step_flag_unclassifiable(chunk)
+            qa["unclassifiable"] += int(chunk["flag_unclassifiable"].sum())
 
-        chunk = step_flag_speed(chunk)
-        qa["implausible_speed_entry"] += int(chunk["flag_speed_entry"].sum())
-        qa["implausible_speed_exit"]  += int(chunk["flag_speed_exit"].sum())
-        qa["implausible_speed"]       += int(chunk["flag_speed"].sum())
+            chunk = step_flag_speed(chunk)
+            qa["implausible_speed_entry"] += int(chunk["flag_speed_entry"].sum())
+            qa["implausible_speed_exit"]  += int(chunk["flag_speed_exit"].sum())
+            qa["implausible_speed"]       += int(chunk["flag_speed"].sum())
 
-        chunk = step_flag_duplicates(chunk)
-        qa["duplicates"] += int(chunk["flag_duplicate"].sum())
+            chunk = step_flag_duplicates(chunk)
+            qa["duplicates"] += int(chunk["flag_duplicate"].sum())
 
-        chunk = step_flag_speed_ratio(chunk)
-        qa["large_speed_ratio"] += int(chunk["flag_speed_delta"].sum())
+            chunk = step_flag_speed_ratio(chunk)
+            qa["large_speed_ratio"] += int(chunk["flag_speed_delta"].sum())
 
-        chunk = step_consolidate_flags(chunk)
-        qa["total_flagged"] += int(chunk["any_flag"].sum())
-        qa["total_clean"]   += int((~chunk["any_flag"]).sum())
+            chunk = step_consolidate_flags(chunk)
+            qa["total_flagged"] += int(chunk["any_flag"].sum())
+            qa["total_clean"]   += int((~chunk["any_flag"]).sum())
 
-        chunk = enrich_with_location(chunk, df_active_mission)
-        qa["no_coords"] += int(chunk["flag_no_coords"].sum())
+            chunk = enrich_with_location(chunk, df_active_mission)
+            qa["no_coords"] += int(chunk["flag_no_coords"].sum())
 
-        if "source_file" in chunk.columns:
-            _source_files_seen.update(chunk["source_file"].dropna().unique())
+            if "source_file" in chunk.columns:
+                _source_files_seen.update(chunk["source_file"].dropna().unique())
 
-        chunk["processed_at"]  = pd.Timestamp.now()
-        chunk["pipeline_path"] = "full" if new_mission_detected else "reduced"
-        chunk.to_sql("traffic", engine, schema="silver", if_exists="append", index=False)
+            chunk["processed_at"]  = pd.Timestamp.now()
+            chunk["pipeline_path"] = "full" if new_mission_detected else "reduced"
+            chunk.to_sql("traffic", engine, schema="silver", if_exists="append", index=False)
 
-        qa["rows_processed"] += len(chunk)
-        logger.info("Chunk written: %d rows (total so far: %d)", len(chunk), qa["rows_processed"])
-        print(f"Chunk written: {len(chunk):,} rows (total: {qa['rows_processed']:,})", flush=True)
+            qa["rows_processed"] += len(chunk)
+            logger.info("Chunk written: %d rows (total so far: %d)", len(chunk), qa["rows_processed"])
+            print(f"Chunk written: {len(chunk):,} rows (total: {qa['rows_processed']:,})", flush=True)
+
+    finally:
+        cursor.close()
+        raw_conn.close()
 
     # Populate summary aliases used by the QA report
     qa["source_files_loaded"]  = len(_source_files_seen)
@@ -493,7 +505,7 @@ def run_silver(new_mission_detected: bool, engine: Engine) -> dict:
     # Persist to postgres-dq
     try:
         dq_engine = get_dq_engine()
-        save_qa_report(qa, layer="silver", dq_engine=dq_engine)
+        pass  # placeholder — DQ report persistence deferred to DQ refactor
     except Exception as exc:
         logger.warning("Could not persist QA report to postgres-dq: %s", exc)
 
