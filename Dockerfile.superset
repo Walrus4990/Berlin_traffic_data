@@ -1,6 +1,0 @@
-FROM apache/superset:6.0.0
-USER root
-RUN chmod -R 777 /app/.venv/lib/python3.10/site-packages/ && \
-    /app/.venv/bin/python -m ensurepip && \
-    /app/.venv/bin/python -m pip install psycopg2-binary
-USER superset
