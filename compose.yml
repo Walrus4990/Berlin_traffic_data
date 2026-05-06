@@ -58,7 +58,7 @@ services:
       - ./sql/init/:/docker-entrypoint-initdb.d/
     ports:
       - "5431:5432"
-    mem_limit: 512m
+    mem_limit: 2000m
 
   # ---------- PostgreSQL: data quality
   postgres-dq:
@@ -126,7 +126,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-    mem_limit: 1500m
+    mem_limit: 4000m
 
   # ---------- Airflow webserver
   webserver:

@@ -1,136 +1,133 @@
 
 # TODO — Berlin Traffic Pipeline
-_Last updated: 2026-04-27_
-## Technical Debt
+_Last updated: 2026-04-30_
+
+## Priority 1 — Must fix before next weekly run (data integrity)
+These directly affect data correctness in the next scheduled run.
+
+### ddweb_ingest_traffic.py + weekly DAG — do in one pass
+- [ ] Change `chunk_end = min(to_date, today)` to `min(to_date, today - 1 day at 23:59:59)` in `download_mission()` — applies to both DAGs. Verify time component is `23:59:59` not `00:00:00`.
+- [ ] Remove TEMP mission filter `[89637, 89639]` from `weekly_download()` — without this only 2 missions get updated weekly.
+- [ ] Fix weekly DAG `start_date` and `schedule_interval` to `datetime(2026, 4, 28)` and `0 5 * * 1` before production — scheduled at 5am, after portal's 3am upload, consistent with `today-1` fix.
+- [ ] Add `complete` boolean to tracker — stops inverted date range errors for fully-downloaded missions hitting the portal on every run.
+
+### Initial DAG
+- [ ] Extend initial DAG to run silver → gold after bronze validation completes.
+      Stops short of superset refresh and gold Excel export (weekly DAG handles those).
+      Discuss scope with AI colleague before implementing.
+
+### Silver and gold
+- [ ] Full review of silver and gold transformations — correctness and performance.
+      Specific focus: replace pandas operations with SQL where appropriate given row volumes.
+      Likely slow/memory-heavy on full dataset — test before prod load.
+      12:59 PM# TODO: OOM risk in run_silver — chunked read may still buffer large result sets
+      """pd.read_sql with chunksize=50000 on 39M rows uses a psycopg2 server-side cursor
+      but the full query is held open for the duration. On low-memory systems this
+      can cause SIGKILL before the first chunk is processed.
+      Investigate: server-side cursor with named cursor in psycopg2, or LIMIT/OFFSET
+      batching by source_file to bound memory per iteration."""
+
+### Pipeline architecture — do alongside silver/gold review
+- [ ] Refactor superset logic out of DAG into a dedicated `superset.py` module.
+      Current: DAG contains DB connection, dataset registration, dashboard import, and cache refresh.
+      Problem: `refresh_superset` uses `get_traffic_engine()` to extract raw URI — brittle and wrong for prod.
+      Goal: clean separation — DAG orchestrates, `superset.py` handles all superset interactions.
+- [ ] Superset DB connection not persisting — debug as part of above refactor.
+
+
+## Priority 2 — Fix before prod load (pipeline correctness)
+
+### DQ database — do in one pass (touch init_dq.sql and test_ingest.py together)
+- [ ] Audit all DQ tables — align naming to `segment` throughout, drop serial IDs, check schemas.
+      Currently inconsistent: `chunk_download_events`, `missing_segments`, `mission_completeness`, `segment_download_events`.
+- [ ] Add `mission_start` and `mission_end` to `mission_completeness` table.
+- [ ] Truncate `mission_completeness` and `missing_segments` before each run, or add `run_id` to distinguish runs.
+- [ ] Confirm `today-1` fix resolves pattern 1 missing segments — rerun `validate_bronze` after fix and check DQ tables.
+
+### Data integrity — investigate
+- [ ] NULL speed values in gold — trace back through silver cleaning to source.
+- [ ] Check `mission_id` added as column to `bronze.traffic` at load time — extract from `source_file` or add during merge with `bronze.mission`.
+- [ ] Silver `NOT IN` query — fix for large `processed_set`.
+- [ ] Investigate stub segment filename mismatch at mission start (pattern 2) — check if downloaded filenames match what completeness check expects for opening stubs.
+
+### Human portal checks
+- [ ] Manually check portal for missions 89637, 89638, 97589 — attempt manual download to confirm if data is genuinely blank or pipeline issue.
+- [ ] Manually check portal for 32040 — entirely empty across all segments.
+- [ ] Manually check portal for 54814 — 4 missing segments in Oct/Nov 2020 and 2021.
+
+### Schema and init scripts
+- [ ] SQL init scripts — confirm bronze/silver/gold schemas and tables correctly defined in `sql/init/`.
+- [ ] Standardise table creation — replace inline `CREATE TABLE IF NOT EXISTS` with SQL init files throughout.
+
+
+## Priority 3 — Code quality and prod readiness
+
+### db.py and DQ module — do in one pass
+- [ ] Remove stale `save_qa_report()` from `db.py` — move any needed DQ logic to DQ module, use `save()` instead.
+- [ ] `_write_chunk_event()` creates a new engine on every invocation inside the download loop — ~900 chunks means potentially many engine creations. Refactor to create engine once in `download_mission()` and pass as parameter. Discussion: with 20s sleep between chunks and failures being a small fraction of 900, overhead may be negligible — decide whether to fix or accept as is.
+
+### Airflow and infrastructure
+- [ ] Airflow admin credentials (admin/admin) hardcoded in compose — move to `.env` vars `AIRFLOW_ADMIN_USER` and `AIRFLOW_ADMIN_PASSWORD`.
 - [ ] Airflow 2.7.0 / Python 3.8 EOL — plan upgrade path when prod environment allows.
       Risks: DAG API changes, provider packages unbundled, DB migration, dependency breaks.
       Do in a separate branch with full test run before touching prod.
-- [ ] Airflow admin credentials (admin/admin) hardcoded in compose — move to .env vars
-      AIRFLOW_ADMIN_USER and AIRFLOW_ADMIN_PASSWORD
-
-## P1 — Blocking or data integrity risk
-1. NULL speed values in gold — trace back through silver cleaning to source
-2. Remove TEMP mission filter from `weekly_download()` before any prod run
-3. SQL init scripts — confirm bronze/silver/gold schemas and tables are correctly defined in `sql/init/`
-4. Standardise table creation approach across traffic and DQ databases — replace inline `CREATE TABLE IF NOT EXISTS` with SQL init files throughout
-5. Fix weekly DAG `start_date` and `schedule_interval` to `datetime(2026, 4, 28)` and `0 5 * * 1` before production
-
-## P2 — Data quality
-6. Check if `mission_id` should be added as column to `bronze.traffic` at load time — extract from `source_file` filename or add during merge with `bronze.mission`
-7. Check if MISSION_RENAME and LOCATION_RENAME are necessary — if portal column names are already clean, drop renaming to reduce confusion
-8. Audit ID uniqueness across mission_df, location_df, traffic files
-9. Check `device_id` always arrives as clean int from portal
-10. Silver cross-chunk dedup for prod
-11. Silver `NOT IN` query — fix for large `processed_set`
-12. Change `bronze.location` from full-replace to append once ID uniqueness confirmed
-13. Define no-data alert — if `bronze.traffic` returns 0 new rows after load, raise error/alert rather than silently continuing
-14. Write `tests/ingest_test_weekly.py` for weekly download validation
-15. Check parquet file sizes in MinIO after initial download completes — validate memory assumptions for prod environment with 7-8GB RAM
-
-## P3 — Output and publishing
-16. Change MinIO gold export from parquet to CSV — calculate expected row counts first, may need chunking. Civil servants cannot open parquet
-17. Two gold files in MinIO (`traffic_today` and `traffic_latest`) — decide if both needed
-18. Rename MinIO folder from `gold/` to something intuitive for civil servants e.g. `exports/` or `open-data/`
-19. Check if MinIO sub-folder can be pointed to an API endpoint
-20. Clean location display column for dashboard — strip device prefix (e.g. 'DD 8472 Halker Zeile' → 'Halker Zeile')
-
-## P4 — Code quality and prod readiness
-21. Replace f-strings with `%s` logging throughout
-22. Superset connection not persisting — DB connection still needs setting manually after each run. Debug `refresh_superset` API call
-23. Airflow migration task for prod SQL init on government Kubernetes cluster
-24. Refactor `save_qa_report()` out of `db.py` — move DQ logic to DQ module, use `save()` instead
-25. Review and standardise file naming across `etl/` and `utils/`
-26. Full refactor and rename — replace bronze/silver/gold naming with descriptive alternatives across DAG, ETL files, DB schemas, and utils
-27. Rename bronze/silver/gold schema names across traffic DB and DQ DB in one go during naming refactor
-28. Rename DAG to reflect TS only structure
-29. Initial DAG currently stops at bronze validation — decide whether it should run the full pipeline (silver → gold → publish → superset) after initial load completes
-
-
-## MinIO / Prod Integration
-- [ ] Confirm MinIO endpoint, access key, secret key with Civitas team
-- [ ] Swap MINIO_ROOT_USER/PASSWORD to MINIO_ACCESS_KEY/SECRET_KEY for prod
-- [ ] Check ETL Python client (boto3 vs minio) and align env var names accordingly
-- [ ] Confirm whether SSL needed for Civitas MinIO endpoint
-
-## Infrastructure
-- [ ] Check prod client VM memory limits and adjust mem_limit values accordingly.
+- [ ] Check prod client VM memory limits and adjust `mem_limit` values accordingly.
       Current: scheduler 1500m, webserver 1000m, postgres instances 512m.
       Risk: silent OOM-kill if load increases.
 
+### Output and publishing — do in one pass
+- [ ] Change MinIO gold export from parquet to CSV — calculate expected row counts first, may need chunking. Civil servants cannot open parquet.
+- [ ] Two gold files in MinIO (`traffic_today` and `traffic_latest`) — decide if both needed.
+- [ ] Rename MinIO folder from `gold/` to something intuitive e.g. `exports/` or `open-data/`.
+- [ ] Check if MinIO sub-folder can be pointed to an API endpoint.
+- [ ] Clean location display column for dashboard — strip device prefix (e.g. `DD 8472 Halker Zeile` → `Halker Zeile`).
+
+### Data quality checks
+- [ ] Define no-data alert — if `bronze.traffic` returns 0 new rows after load, raise error/alert rather than silently continuing.
+- [ ] Check parquet file sizes in MinIO — validate memory assumptions for prod environment with 7-8GB RAM.
+- [ ] Audit ID uniqueness across `mission_df`, `location_df`, traffic files.
+- [ ] Check `device_id` always arrives as clean int from portal.
+- [ ] Check if `MISSION_RENAME` and `LOCATION_RENAME` are necessary — if portal column names already clean, drop renaming.
+- [ ] Change `bronze.location` from full-replace to append once ID uniqueness confirmed.
+
+### Code quality
+- [ ] Replace f-strings with `%s` logging throughout.
+- [ ] Review and standardise file naming across `etl/` and `utils/`.
+- [ ] Rename DAG to reflect TS only structure.
+
+## Priority 4 — Nice to have / deferred
+
+### Naming and refactoring — do in one pass, low urgency
+- [ ] Full refactor and rename — replace bronze/silver/gold naming with descriptive alternatives
+      across DAG, ETL files, DB schemas, and utils.
+- [ ] Rename bronze/silver/gold schema names across traffic DB and DQ DB in one go during naming refactor.
+- [ ] Review and standardise file naming across `etl/` and `utils/`.
+- [ ] Rename DAG to reflect TS only structure.
+
+### Infrastructure — deferred to prod environment
+- [ ] Airflow migration task for prod SQL init on government Kubernetes cluster.
+- [ ] Check prod client VM memory limits and adjust `mem_limit` values accordingly.
+      Current: scheduler 1500m, webserver 1000m, postgres instances 512m.
+      Risk: silent OOM-kill if load increases.
+
+### Investigations — low urgency
+- [ ] Check if `MISSION_RENAME` and `LOCATION_RENAME` are necessary — if portal column names
+      already clean, drop renaming to reduce confusion.
+- [ ] Two gold files in MinIO (`traffic_today` and `traffic_latest`) — decide if both needed.
+- [ ] Check if MinIO sub-folder can be pointed to an API endpoint.
+- [ ] Audit `device_id` always arrives as clean int from portal.
+- [ ] Audit ID uniqueness across `mission_df`, `location_df`, traffic files.
 
 
 
-Write empty/failed chunk events to DQ DB alongside logger calls in _download_into_parquet() and download_mission()
-Manually check portal for 89637, 97589, 32040 to understand empty chunks
-Fix timezone-naive datetime.datetime.now() in initial_load_dag.py — DONE
-Wipe MinIO and tracker, rerun clean full download after all fixes confirmed working
 
 
 
-Session 1: Fix check_bronze_completeness() only. Define done: DQ table shows correct expected/actual counts for all 44 missions. Nothing else.
-Session 2: Fix the date format bug and rerun clean full download. Define done: all missions downloaded, tracker complete, bronze loaded.
-Session 3: Silver layer — only once bronze is confirmed clean.
-Session 4: Refactor and tidy — only once pipeline works end to end.
-Rule for each session: write the done criteria at the top of the chat before writing any code. If something new comes up, add to ToDo and ignore it until its session.
+### Download results:
+complete download log: Start date > end date errors — missions 40671, 40687, 94076, 94074, 97594, 69502, 40688, 72976, 73698, 69501, 54814, 40718, 43114, 71077. All logged to bronze.segment_download_events. This is a data quality issue in the source — the portal has missions where end date is before start date. Not a code bug.
+Empty segments — multiple missions returned no data (32040 entirely empty across many months, 89637, 89638, 97589, 40715, 40716, 40714). All correctly logged to DQ.
+Successful uploads — missions 74739, 45098, 99512, 99516, 90938, 89639, 97593, 97595, 97596, 97592, 99511, 76539, 76538, 88538, 88539, 71078, 40963, 40964, 72973, 72975, 69478, 69481 all uploaded to MinIO.
 
-
-
-# Migration to-do: switch to PostgresHook
-## Why we're making this change
-
-The client runs a managed Kubernetes cluster where we do not control the environment.
-This means our current approach of reading `POSTGRES_TRAFFIC_*` env vars will break
-on their infrastructure — those vars won't exist, so `os.getenv()` returns `None` and
-the connection fails silently.
-
-Their Airflow instance will have Postgres registered as a named connection in Airflow's
-own Connections store (standard practice in managed K8s Airflow setups). The correct
-pattern is to reference that connection by its `conn_id` via `PostgresHook` — Airflow
-resolves the credentials internally, and our code never needs to know the host,
-password, or port.
-
-This also means:
-- credentials are managed by the client's team, not stored in our codebase or .env files
-- if they rotate credentials, they update one place in their Airflow UI — no redeploy needed
-- our code is portable: it works identically in local Docker (via `AIRFLOW_CONN_*` env var)
-  and in their K8s cluster (via their Connections config)
-
-The change is minimal — one function in `utils/db.py`, drop the context manager pattern
-in the ETL files, DAGs are untouched.
-
-## 1. Ask the client
-- [ ] Confirm the `conn_id` they use for Postgres in their Airflow setup (probably `"postgres_conn"` but confirm before hardcoding)
-
-
-## 2. Update the code
-- [ ] Rewrite `get_traffic_engine()` in `utils/db.py`:
-```python
-  from airflow.providers.postgres.hooks.postgres import PostgresHook
-
-  def get_traffic_engine(conn_id: str = "postgres_conn"):
-      return PostgresHook(postgres_conn_id=conn_id).get_sqlalchemy_engine()
-```
-- [ ] Find every `with get_traffic_engine() as engine:` across all ETL files (bronze, silver, gold) and replace with `engine = get_traffic_engine()` — drop the context manager, PostgresHook doesn't use one
-- [ ] DAG files need no changes
-
-## 3. Reconfigure Docker for local testing
-- [ ] Remove `POSTGRES_TRAFFIC_HOST`, `POSTGRES_TRAFFIC_USER`, `POSTGRES_TRAFFIC_PASSWORD`, `POSTGRES_TRAFFIC_DB`, `POSTGRES_TRAFFIC_PORT` env vars from the Airflow service in `compose.yml` — confirms your code no longer relies on them
-- [ ] Add this to the Airflow service environment in `compose.yml` instead:
-```yaml
-  AIRFLOW_CONN_POSTGRES_CONN: "postgresql://youruser:yourpassword@postgres-traffic:5432/yourdb"
-```
-  This tells Airflow about the connection via env var — mimics how their K8s cluster manages it, no UI clicking needed on every restart
-
-## 4. Test locally
-- [ ] Bring compose stack up and trigger the DAG manually
-- [ ] Confirm bronze, silver, gold layers all write successfully
-- [ ] Confirm Superset refresh still works
-
-## 5. Deploy
-- [ ] Send client the `conn_id` you're using so they can verify it matches their Airflow Connections config
-- [ ] Remove any leftover `POSTGRES_TRAFFIC_*` vars from any `.env` files or CI/CD configs
-
-etl/ddweb_ingest_traffic.py — _write_chunk_event calls get_dq_engine() on every invocation inside a loop. Refactor to create engine once in download_mission() and pass as parameter.
-etl/ddweb_ingest_traffic.py — active_missions filtered to hardcoded IDs [89637, 89639] — marked TEMP, remove before prod.
-dag/berlin_traffic_pipeline.py — refresh_superset uses get_traffic_engine() to extract raw URI and pass to Superset API. Needs rethinking for prod.
-silver_data_layer.py — step_flag_duplicates operates within chunks only; cross-chunk duplicates not caught. Acceptable for now, address for prod.
+load_traffic_to_bronze — working correctly. Idempotency confirmed — already-loaded files skipped, only new segments loaded. 40,995 rows appended total. Tracker updated correctly for each mission.
+validate_bronze — ran cleanly. 44 missions checked, 44 rows written to mission_completeness, 65 missing segments written to missing_segments.
+One thing to flag from load_traffic_to_bronze: mission 89637 shows segments being skipped up to 20260101 but nothing loaded for Feb, Mar, Apr 2026 — which matches the empty segments we saw in complete_download. Same for 89638 and 97589. So those are genuinely empty from the portal, not missing due to a pipeline bug. But we need DBeaver to confirm.
