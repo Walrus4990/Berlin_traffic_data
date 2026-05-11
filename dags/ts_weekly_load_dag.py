@@ -14,17 +14,16 @@ logger = logging.getLogger(__name__)
 default_args = {
     "owner": "ts",
     "retries": 0,
-    "retry_delay": timedelta(minutes=5),
+    #"retry_delay": timedelta(minutes=5),
 }
 
 # ── Task functions ────────────────────────────────────────────────────────────
 
-def run_ingest_ref(**kwargs):
+def run_load_ref_to_bronze(**kwargs):
     """Fetch missions and locations from DDWeb portal → bronze.mission, bronze.location"""
-    from etl.bronze_data_layer import ingest_ref
-    result = ingest_ref()
-    kwargs["ti"].xcom_push(key="new_mission_detected", value=result["new_mission_detected"])
-    logger.info("ingest_ref result: %s", result)
+    from etl.bronze_data_layer import load_ref_to_bronze
+    new_mission, new_location = load_ref_to_bronze()
+    logger.info("%d new mission rows and %d new location rows appended", new_mission, new_location)
 
 
 def run_ingest_traffic(**kwargs):
@@ -49,13 +48,7 @@ def run_validate_bronze(**kwargs):
 def run_silver_layer(**kwargs):
     """Clean and enrich bronze data into silver tables"""
     from etl.silver_data_layer import run_silver
-    from utils.db import get_traffic_engine
-    new_mission = kwargs["ti"].xcom_pull(
-        key="new_mission_detected",
-        task_ids="ingest_ref"
-    )
-    engine = get_traffic_engine()
-    result = run_silver(bool(new_mission), engine)
+    result = run_silver()
     logger.info("Silver layer result: %s", result)
 
 
@@ -149,7 +142,7 @@ def refresh_superset(**kwargs):
 
 # ── DAG definition ────────────────────────────────────────────────────────────
 with DAG(
-    dag_id="berlin_traffic_pipeline",
+    dag_id="ts_weekly_load_dag",
     default_args=default_args,
     start_date=days_ago(1),
     schedule_interval="@weekly",
@@ -157,9 +150,9 @@ with DAG(
     tags=["berlin", "traffic", "superset"],
 ) as dag:
 
-    t_ingest_ref = PythonOperator(
-        task_id="ingest_ref",
-        python_callable=run_ingest_ref,
+    t_load_ref = PythonOperator(
+        task_id="load_ref_to_bronze",
+        python_callable=run_load_ref_to_bronze,
         execution_timeout=timedelta(minutes=10),
     )
 
@@ -205,7 +198,7 @@ with DAG(
     )
 
     # ── Dependencies ──────────────────────────────────────────────────────────
-    t_ingest_ref >> t_silver
+    t_load_ref >> t_silver
     t_ingest_traffic >> t_load_traffic >> t_silver
     t_load_traffic >> t_validate_bronze
     t_silver >> t_gold >> t_publish >> t_superset

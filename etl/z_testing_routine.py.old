@@ -11,10 +11,13 @@ client.ensure_authenticated()
 
 # --- Fetch missions ---
 missions_df = fetch_missions(client)
-#locatons_df = fetch_locations(client)
+locations_df = fetch_locations(client)
 
-print(missions_df[["Id", "FromDate", "ToDate"]])
-#print(locatons_df[["Id"]])
+print(missions_df[["Id", "FromDate", "ToDate", "LocationTitle"]])
+print(missions_df.dtypes)
+print(locations_df[["Id", "LocationTitle", "Created"]])
+print(locations_df.dtypes)
+
 
 # # =========================
 # # TEST CASE - test minio in bronze layer
