@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS bronze.location (
 );
 
 CREATE TABLE IF NOT EXISTS bronze.traffic (
+    mission_id          INTEGER,
     device_id           TEXT,
     date_raw            TEXT,                  -- unparsed datetime string from source
     speed_entry         NUMERIC,               -- km/h
@@ -52,9 +53,11 @@ CREATE TABLE IF NOT EXISTS bronze.traffic (
     ingested_at         TIMESTAMP DEFAULT NOW()
 );
 
+CREATE INDEX IF NOT EXISTS idx_bronze_traffic_source_file ON bronze.traffic (source_file);
 
 -- ── SILVER ───────────────────────────────────────────────────────────────────
--- One row per deployment: bronze.mission enriched with GPS coords from bronze.location.
+
+
 CREATE TABLE IF NOT EXISTS silver.active_mission (
     -- from bronze.mission
     mission_id                  INTEGER,
@@ -119,6 +122,7 @@ CREATE TABLE IF NOT EXISTS silver.traffic (
     pipeline_path                       TEXT
 );
 
+CREATE INDEX IF NOT EXISTS idx_silver_traffic_source_file ON silver.traffic (source_file);
 
 -- ── GOLD ─────────────────────────────────────────────────────────────────────
 
@@ -147,6 +151,7 @@ CREATE TABLE IF NOT EXISTS gold.traffic (
     modal_share_lkw         NUMERIC,
     modal_share_krad        NUMERIC
 );
+
 
 
 -- ── PIPELINE LOG ─────────────────────────────────────────────────────────────

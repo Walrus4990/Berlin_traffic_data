@@ -20,12 +20,11 @@ default_args = {
 
 # ── Task functions ────────────────────────────────────────────────────────────
 
-def run_ingest_ref(**kwargs):
+def run_load_ref_to_bronze(**kwargs):
     """Fetch missions and locations from DDWeb portal → bronze.mission, bronze.location"""
-    from etl.bronze_data_layer import ingest_ref
-    result = ingest_ref()
-    kwargs["ti"].xcom_push(key="new_mission_detected", value=result["new_mission_detected"])
-    logger.info("ingest_ref result: %s", result)
+    from etl.bronze_data_layer import load_ref_to_bronze
+    new_mission, new_location = load_ref_to_bronze()
+    logger.info("%d new mission rows and %d new location rows appended", new_mission, new_location)
 
 
 def run_complete_download(**kwargs):
@@ -36,9 +35,9 @@ def run_complete_download(**kwargs):
     logger.info("Initial download finished at %s", datetime.now(tz=pytz.timezone("Europe/Berlin")))
 
 
-def run_load_traffic(**kwargs):
+def run_load_traffic_to_bronze(**kwargs):
+    """Read new parquet files from MinIO → append to bronze.traffic"""
     from etl.bronze_data_layer import load_traffic_to_bronze
-    logger.info("Loading traffic to bronze started at %s", datetime.now(tz=pytz.timezone("Europe/Berlin")))
     rows = load_traffic_to_bronze()
     logger.info("Loaded %d rows to bronze", rows)
 
@@ -51,7 +50,7 @@ def run_validate_bronze(**kwargs):
 
 # ── DAG definition ────────────────────────────────────────────────────────────
 with DAG(
-    dag_id="initial_load_ts",
+    dag_id="ts_initial_load",
     default_args=default_args,
     start_date=days_ago(1),
     schedule_interval=None,
@@ -61,9 +60,9 @@ with DAG(
 ) as dag:
 
 
-    t_ingest_ref = PythonOperator(
-        task_id="ingest_ref",
-        python_callable=run_ingest_ref,
+    t_load_ref = PythonOperator(
+        task_id="load_ref_to_bronze",
+        python_callable=run_load_ref_to_bronze,
         execution_timeout=timedelta(minutes=10),
     )
 
@@ -75,7 +74,7 @@ with DAG(
 
     t_load_traffic = PythonOperator(
         task_id="load_traffic_to_bronze",
-        python_callable=run_load_traffic,
+        python_callable=run_load_traffic_to_bronze,
         execution_timeout=timedelta(hours=3),
     )
 
@@ -87,4 +86,4 @@ with DAG(
 
 
     # ── Dependencies ──────────────────────────────────────────────────────────
-    t_ingest_ref >> t_complete_download >> t_load_traffic >> t_validate_bronze
+    t_load_ref >> t_complete_download >> t_load_traffic >> t_validate_bronze #t_load_ref can run independently but added here to sequence to fail fast.
