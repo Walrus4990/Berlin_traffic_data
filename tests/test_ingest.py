@@ -14,6 +14,14 @@ from etl.ddweb_ingest_traffic import get_chunks, get_chunk_start
 logger = logging.getLogger(__name__)
 
 def check_bronze_completeness(run_type: str) -> dict:
+    """
+    Checks completeness of bronze.traffic against expected segments derived from bronze.mission.
+    For each mission, computes expected parquet filenames, then compares against source_file values
+    in bronze.traffic. Writes two reports to the DQ database:
+    - bronze.mission_completeness: one row per mission with expected vs actual segment counts
+    - bronze.missing_segments: one row per missing filename
+    Returns dict with missions checked and missing segment count.
+    """
     berlin = pytz.timezone("Europe/Berlin")
     run_at = pd.Timestamp.now(tz=berlin)
 

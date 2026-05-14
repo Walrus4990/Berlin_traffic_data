@@ -15,21 +15,7 @@ These directly affect data correctness in the next scheduled run.
       Discuss scope with AI colleague before implementing.
 
 ### Silver and gold
-- [ ] Full review of silver and gold transformations — correctness and performance.
-      Specific focus: replace pandas operations with SQL where appropriate given row volumes.
-      Likely slow/memory-heavy on full dataset — test before prod load.
-      12:59 PM# TODO: OOM risk in run_silver — chunked read may still buffer large result sets
-      """pd.read_sql with chunksize=50000 on 39M rows uses a psycopg2 server-side cursor
-      but the full query is held open for the duration. On low-memory systems this
-      can cause SIGKILL before the first chunk is processed.
-      Investigate: server-side cursor with named cursor in psycopg2, or LIMIT/OFFSET
-      batching by source_file to bound memory per iteration."""
-      - check if silver shoudl have same numebr of rows as bronze at teh moment it does not
-      - issue: 1. Zero rows written repeatedly
-Silver thinks there's nothing left to process. get_loaded_files is returning all source files as already processed, so the query returns 0 rows — but the loop still iterates producing empty chunks instead of breaking.
-2. Why is the loop not breaking on empty?
-The if not rows: break should catch this. But with a server-side cursor returning 0-row chunks repeatedly, something is off. My suspicion: fetchmany(50000) is returning empty lists but not falsy in the way we expect, or the cursor is behaving unexpectedly when the result set is exhausted.
-The bug: when fetchmany returns an empty list [], if not rows: break should trigger. But something is preventing it. Can you share the current while True block from your silver.py?
+
 
           ADR: Tracker date inversion — decision to defer fix
           Date: 2026-05-06
@@ -157,17 +143,6 @@ validate_bronze — ran cleanly. 44 missions checked, 44 rows written to mission
 One thing to flag from load_traffic_to_bronze: mission 89637 shows segments being skipped up to 20260101 but nothing loaded for Feb, Mar, Apr 2026 — which matches the empty segments we saw in complete_download. Same for 89638 and 97589. So those are genuinely empty from the portal, not missing due to a pipeline bug. But we need DBeaver to confirm.
 
 
-
-# Silver Layer — Session TODO
-_Last updated: 2026-05-06_
-
----
-
-## Step 1 — Uniqueness Audit (one-off SQL, not persisted)
-
-
-
-
 ---
 ## TODO — Pagination in ddweb_ingest_ref
 Date: 2026-05-07
@@ -189,24 +164,21 @@ Confirm single-page fetch is safe and document the page size limit as a known co
 
 ---
 
-## Step 2 — Dedup + `new_mission_detected` flag
 
-Remove new_mission_detected parameter from run_silver() signature
-All cleaning steps run unconditionally
-Remove pipeline_path column from silver output
-work out dedup by looking at current python fiel but translate to sql
+## Step 3 — load data (initial & weekly) check idempotency
 
----
-
-## Step 3 — Initial vs Weekly Fork Decision
+Note: currect dedup approach as a bug: - issue: 1. Zero rows written repeatedly
+Silver thinks there's nothing left to process. get_loaded_files is returning all source files as already processed, so the query returns 0 rows — but the loop still iterates producing empty chunks instead of breaking.
+2. Why is the loop not breaking on empty?
+The if not rows: break should catch this. But with a server-side cursor returning 0-row chunks repeatedly, something is off. My suspicion: fetchmany(50000) is returning empty lists but not falsy in the way we expect, or the cursor is behaving unexpectedly when the result set is exhausted.
+The bug: when fetchmany returns an empty list [], if not rows: break should trigger. But something is preventing it. Can you share the current while True block from your silver.py?
 
 **Rationale:**
-Current code has a single `run_silver` entry point with behaviour modified by `new_mission_detected`. The question is whether initial and weekly runs need structurally different logic, or whether one entry point with clean conditionals is sufficient.
+The question is whether initial and weekly runs need structurally different logic, or whether one entry point with clean conditionals is sufficient.
 
 **What we know:**
 - Initial run: 39M rows, full history, all missions. Performance is the main concern.
 - Weekly run: small incremental append, only new source files processed (idempotency via `get_loaded_files`).
-- Gold is already fully incremental — entire aggregation reruns in SQL each time. Silver could follow same pattern.
 - The idempotency mechanism (`get_loaded_files` → skip already-processed `source_file`) works at both scales.
 - Main structural difference: initial run may need a post-ingestion dedup pass; weekly run does not (or it is cheap enough to always run).
 
@@ -221,7 +193,7 @@ Confirm dedup key columns against actual traffic schema
 
 ---
 
-## Step 4 — Location Cleaning in Pandas (incl. Pair Logic)
+## Step 4 — Location Cleaning (incl. Pair Logic)
 
 **Rationale:**
 `bronze.location` is small (~45 rows). Pandas is appropriate. This is where sensor pair enrichment belongs — it is not a quality flag, it is enrichment (`is_pair: bool`, `paired_mission_id`).
@@ -234,56 +206,6 @@ Confirm dedup key columns against actual traffic schema
 
 **TBD:** pair matching rules, join key, whether `location_id` or `location_title` is the right key.
 
-
-
----
-
-## Before next run:
-
-Rebuild Docker container to apply updated init.sql (data-safe — do NOT use -v):
-
-bashdocker-compose build
-docker-compose up -d
----
-
-## Step 5 — SQL Cleaning (Flag → Inspect → Drop → DQ)
-
-**Rationale:**
-Gold proves SQL-first works at 39M row scale. All row-wise cleaning steps (speed flags, class flags, window checks, duplicates) translate to SQL WHERE/CASE. Pandas chunking approach in current code has confirmed OOM risk and cross-chunk dedup gaps.
-
-**What we know:**
-- Current cleaning steps and their SQL translatability:
-  - `step_parse_timestamps` → move to bronze ingest (agreed)
-  - `step_flag_unknown_device` → SQL: LEFT JOIN to mission, flag NULLs
-  - `step_flag_unclassifiable` → SQL: WHERE vehicle_class IN (6, 250)
-  - `step_flag_speed` → SQL: CASE WHEN by class
-  - `step_flag_duplicates` → SQL: ROW_NUMBER() OVER (PARTITION BY dedup_cols)
-  - `step_flag_speed_ratio` → SQL: CASE WHEN both speeds > 0
-  - `step_flag_outside_window` → SQL: JOIN to mission deployment windows
-  - `step_consolidate_flags` → SQL: CASE WHEN any flag col is true
-
-- Human-in-the-loop process agreed:
-  1. Run flags in SQL
-  2. Inspect flagged rows
-  3. Adjust thresholds if needed
-  4. Confirm → convert flag to drop
-  5. Log dropped rows + reason to DQ database
-
-**TBD:** DQ table schema and granularity — will emerge from seeing actual flag volumes in step 5. Do not pre-design.
-
----
-
-## Step 6 — Merge Traffic + Location in SQL
-
-**Rationale:**
-With `mission_id` stamped onto traffic at ingest, and mission joined to location on confirmed key (TBD from audit), the merge becomes a straightforward SQL join — no time-window logic needed.
-
-**What we know:**
-- Current approach: time-windowed join on `device_id` + `datum_parsed` — fragile and complex.
-- Proposed: `bronze.traffic` JOIN `bronze.mission` ON `mission_id` JOIN `bronze.location` ON `location_title` (or `location_id` — TBD).
-- `mission_id` stamp in `_download_into_parquet` is a one-line addition at ingest — needs doing before this step.
-
-**TBD:** join key confirmed in Step 1. Mission_id stamp confirmed working before this step runs.
 
 ---
 
@@ -298,3 +220,162 @@ Output of the cleaned, merged dataset into the silver schema. Idempotency must b
 - Gold reads from `silver.traffic` and reruns full aggregation in SQL each time — so silver append behaviour is fine.
 
 **TBD:** whether `silver.mission` is a full replace or append. Depends on pair logic output from Step 4.
+
+
+
+## New inputs- To Dos
+- Partitioning silver.traffic — rebuild with partitions (by date or source_file) to reduce disk temp space usage on large queries. File: init.sql / silver DDL.
+- vehicle_class_label vs lookup table — decide at gold/dashboard layer whether to drop vehicle_class_label from silver/gold and replace with a reference lookup table for Superset display. File: gold DDL, Superset config.
+- Write staging → silver.traffic + DQ — split staging table: clean rows (no flags) → silver.traffic, flagged rows + reason code → dq.traffic. File: silver.py. Context from this session needed — start here in next chat.
+
+
+---
+
+## Before next run:
+
+Rebuild Docker container to apply updated init.sql (data-safe — do NOT use -v):
+
+bashdocker-compose build
+docker-compose up -d
+---
+
+
+
+
+
+Here's the handover note:
+
+---
+
+# Handover Note — silver.py Rebuild — Next Session
+
+## Who you are
+You are a coding coach helping the human rebuild `silver.py` step by step. You do not write code unprompted. You do not move to the next step until explicitly told. Follow the Ways of Working document strictly — it will be provided.
+
+---
+
+## What this pipeline does
+Medallion architecture ETL pipeline for traffic sensor data in Tempelhof-Schöneberg, Berlin.
+
+- **Orchestrator:** Apache Airflow
+- **Source:** PostgreSQL — `bronze` schema
+- **Destination:** PostgreSQL — `silver` schema (same database as bronze)
+- **DQ destination:** Separate PostgreSQL database (`postgres_dq`)
+- **Scale:** 39m rows initial load; hundreds of thousands per weekly run
+- **Language pattern:** SQL-first transformations orchestrated via Python functions for large data, small tables can be handled using pandas
+
+---
+
+
+## Sensor hardware — critical context
+- traffic sensor data
+- most sensors in pairs one on each side of a street
+- Single-point sensor, ~10cm wide grey box
+- Entry and exit are two readings milliseconds apart at the **same physical location** — not two points metres apart
+- A vehicle physically cannot decelerate from normal speed to zero over this distance — exit=0 means sensor failure, not braking
+- Sensor unreliable below ~10kmh
+- outr pipeline retrieves data from a portal not the sensors
+- sensor data is loaded onto the portal once a day 3am and loads past 24h (00:00-23:59)
+- data stucture: two reference tables: mission file, location file, which include location and deployment length data and teh actual dat ain a  traffic table whcih is sensor data
+
+---
+
+## Vehicle classes in data
+
+| code | label | notes |
+|------|-------|-------|
+| 2 | PkwA | Car with trailer |
+| 3 | Lkw | Lorry |
+| 5 | Bus | Bus |
+| 6 | nk Kfz | Motor vehicle unclassified |
+| 7 | Pkw | Car — 68% of all rows |
+| 8 | LkwA | Lorry with trailer |
+| 9 | Sattel-Kfz | Articulated HGV |
+| 10 | Krad | Motorcycle |
+| 11 | Lfw | Delivery van |
+| 230 | Fahrrad | Bicycle — 18% of rows, likely undercounted |
+| 250 | Teilverdeckte Kfz | Partially obscured — absent from data |
+
+---
+
+## Deployment/mission model — critical context
+- Sensors are physical devices deployed at street locations for a period of time
+- A sensor can be moved from one location to another — the old deployment ends, new one starts, often same day with 1-3 hour gap
+- Transition-day readings with NULL location are expected — sensor was recording during the move
+- eachnew deployment is a new mission, soem missions are closed adn others still live
+
+
+## What has been done in the previous session
+
+### Exploratory DQ analysis — complete
+All DQ analysis is complete and documented in `silver_dq_adr.md`. The next AI must read this file in full before starting. Key findings:
+
+- **Timestamps:** always present, always parseable. No flag needed.
+- **Speed:** entry and exit fail in different ways (entry has error codes >100, exit has zeros=NULL). Canonical `speed = GREATEST(nulled entry, nulled exit)`. Flags: `flag_speed_entry_100`, `flag_speed_exit_100`, `flag_speed_100`, `flag_bike_speed_40`.
+- **Length:** unreliable especially for bicycles. Per-class bounds defined. Flags: `flag_length_below_min`, `flag_length_above_max`. No drops.
+- **Duplicates:** 79 rows, sporadic, degraded sensors. Flag and drop second occurrence by `ingested_at`.
+- **Multi-location:** sensors move between locations on transition days. NULL location rows on transition days — drop. Not a data error.
+- **Unclassifiable (class 6, 250):** 0.10%, negligible. No flag, no drop.
+- **Vehicle class:** 1:1 mapping with label. Label redundant — keep both in silver for now, decide at gold layer.
+
+### Staging INSERT query — complete
+The INSERT INTO `silver.staging_traffic` query is finalised and verified. It reads from `bronze.traffic`, computes all agreed flags, and writes to staging. See Current Code section below.
+
+### Schemas — complete
+`silver.traffic` and `silver.staging_traffic` DDL finalised. See Current Code section below.
+
+---
+
+## Tasks for next session
+
+### Task 1 — Fix idempotency bug and agree entry point structure
+**Bug:** Current silver.py has issue:
+ `get_loaded_files` returns all source files as already processed → 0 rows written. Noneed to alight on all files. Find out why the `while True` loop does not break on empty chunks from server-side cursor — `fetchmany()` returning `[]` should trigger `if not rows: break` but something is preventing it.
+
+**Decisions needed before writing code:**
+- Single entry point (`run_silver`) with conditionals, or two entry points (`run_silver_initial`, `run_silver_weekly`)?
+- Post-ingestion dedup pass: always run, or only on initial load?
+
+
+### Task 2 — Write staging → silver.traffic + DQ
+After staging INSERT is running cleanly:
+- Clean rows (no flags): INSERT INTO `silver.traffic`
+- Flagged rows + reason code: INSERT INTO `dq.traffic`
+- DQ table schema not yet designed — work with human on this
+write code that saves clean rows to silver adn flags to DQ database
+
+### Task 3 — Location cleaning and pair enrichment
+`bronze.location` is small (~45 rows). Pandas appropriate here.
+1. merge location adn mission (onyl relvant cols)
+2. clean files
+3. refactor location descritopm fields so they are suiatbel for display in dashboard,
+4. pair locations
+    - Pairs: two devices, same street, opposite directions, overlapping deployment windows
+    - Pair matching rules not yet defined — define before writing code
+    - Output: `silver.ref_mission_location` — one row per deployment, enriched with coordinates and pair info
+
+### Task 4 — Write silver.ref_mission_location
+- Columns: device_id, location_title, street, lat, lon, start_date, deploy_end, is_pair, paired_mission_id
+- Whether full replace or append depends on pair logic outcome from Task 3. Append is alwys preferred in case portal clears data, we do not want to lose ours
+
+---
+
+## Open ToDos
+1. Partition `silver.traffic` on rebuild — by date or `source_file` — to reduce disk temp space on large queries
+2. `vehicle_class_label` vs lookup table — decide at gold/dashboard layer
+
+
+---
+
+## Files to provide to next AI
+Provide all of these at the start of the next session:
+1. `ways_of_working.md` — coaching rules, must be read first
+2. `silver_dq_adr.md` — this file, full DQ findings and decisions
+3. `silver.py` — current version (to be rebuilt)
+4. `bronze.py` — current version
+5. `utils/db.py` — database connection helpers
+6. `utils/date.py` — date parsing helpers
+7. `dag.py` — Airflow DAG
+8. `init.sql` — full DDL for all schemas (bronze, silver, DQ)
+
+---
