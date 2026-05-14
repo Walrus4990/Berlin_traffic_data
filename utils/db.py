@@ -20,8 +20,12 @@ def get_dq_engine():
 
 def save(df: pd.DataFrame, table_name: str, schema: str, engine) -> None:
     try:
-        df.to_sql(table_name, engine, schema=schema, if_exists="append", index=False)
-        logger.info(f"save: wrote {len(df)} rows to {schema}.{table_name}")
+        raw_conn = engine.raw_connection()
+        try:
+            df.to_sql(table_name, raw_conn, schema=schema, if_exists="append", index=False)
+            raw_conn.commit()
+        finally:
+            raw_conn.close()
     except Exception as e:
         logger.error(f"save failed for {schema}.{table_name}: {e}")
         raise

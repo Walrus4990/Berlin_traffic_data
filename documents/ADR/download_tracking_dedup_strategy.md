@@ -3,16 +3,16 @@ Date: 2026-04-23
 Status: Accepted
 
 ## Context:
-The pipeline downloads traffic sensor data from the DDWeb portal for 44+ missions. Data arrives nightly. Two DAGs exist: an initial historical load and a weekly incremental load. We needed a strategy to track download progress, prevent duplicate processing, and handle failures gracefully.
+The pipeline downloads traffic sensor data from the DDWeb portal for 44+ missions. Data arrives nightly at 3am. Full data for the past day from 00:00 to 23:59:59 get's uploaded. Two DAGs exist: an initial historical load and a weekly incremental load. We needed a strategy to track download progress, prevent duplicate processing, and handle failures gracefully.
 
 ## Decisions:
 1. Single shared download tracker (download_tracker.json in MinIO)
 One JSON file keyed by mission_id. Tracks last_downloaded_to and consecutive_empty_weeks per mission. Both DAGs share it. Rationale: single source of truth, no handover logic needed between DAGs.
 2. Tracker updated after successful bronze ingestion, not after download
 Ensures tracker and bronze.traffic stay in sync. If ingestion fails, next run re-downloads from portal. Re-download is wasteful but harmless — MinIO overwrites same file, bronze dedup prevents duplicate rows, tracker then updates correctly.
-3. Active mission filter uses ToDate > today
+3. Active mission filter uses ToDate > yesterday 23:59:59
 More robust than sentinel date lists. Handles any future date a human might enter. Closed missions never appear in tracker.
-4. chunk_end = min(ToDate, today)
+4. chunk_end = min(ToDate, yesterda_end)
 Captures final days of a closing mission mid-week.
 5. Three-layer deduplication
 

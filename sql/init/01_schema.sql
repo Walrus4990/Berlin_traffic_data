@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS bronze.location (
 );
 
 CREATE TABLE IF NOT EXISTS bronze.traffic (
+    mission_id          INTEGER,
     device_id           TEXT,
     date_raw            TEXT,                  -- unparsed datetime string from source
     speed_entry         NUMERIC,               -- km/h
@@ -52,10 +53,12 @@ CREATE TABLE IF NOT EXISTS bronze.traffic (
     ingested_at         TIMESTAMP DEFAULT NOW()
 );
 
+CREATE INDEX IF NOT EXISTS idx_bronze_traffic_source_file ON bronze.traffic (source_file); --to make dedup quicker
 
 -- ── SILVER ───────────────────────────────────────────────────────────────────
--- One row per deployment: bronze.mission enriched with GPS coords from bronze.location.
-CREATE TABLE IF NOT EXISTS silver.active_mission (
+
+--
+CREATE TABLE IF NOT EXISTS silver.ref_mission_location ( --needs revision/update
     -- from bronze.mission
     mission_id                  INTEGER,
     created_at                  TIMESTAMP,
@@ -79,48 +82,49 @@ CREATE TABLE IF NOT EXISTS silver.active_mission (
 );
 
 CREATE TABLE IF NOT EXISTS silver.traffic (
+    mission_id                          INTEGER,
     device_id                           TEXT,
     date_raw                            TEXT,
+    date_parsed                         TIMESTAMP,
     speed_entry                         NUMERIC,
     speed_exit                          NUMERIC,
+    speed                               NUMERIC,
     length_dm                           NUMERIC,
     vehicle_class                       INTEGER,
     vehicle_class_label                 TEXT,
     source_file                         TEXT,
     ingested_at                         TIMESTAMP,
-    datum_parsed                        TIMESTAMP,
-    datum                               DATE,
-    stunde                              SMALLINT,
-    wochentag                           TEXT,
-    flag_unparseable_timestamp          BOOLEAN,
-    flag_unknown_device                 BOOLEAN,
-    flag_outside_deployment_window      BOOLEAN,
-    flag_ambiguous_location             BOOLEAN,
-    flag_unclassifiable                 BOOLEAN,
-    flag_speed_entry                    BOOLEAN,
-    flag_speed_exit                     BOOLEAN,
-    flag_speed                          BOOLEAN,
+    silver_processed_at                 TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_silver_traffic_source_file ON silver.traffic (source_file); --to make dedup quicker
+
+CREATE TABLE IF NOT EXISTS silver.staging_traffic (
+    mission_id                          INTEGER,
+    device_id                           TEXT,
+    date_raw                            TEXT,
+    date_parsed                         TIMESTAMP,
+    speed_entry                         NUMERIC,
+    speed_exit                          NUMERIC,
+    flag_speed_entry_100                BOOLEAN,
+    flag_speed_exit_100                 BOOLEAN,
+    flag_speed_100                      BOOLEAN,
+    flag_bike_speed_40                  BOOLEAN,
+    speed                               NUMERIC,
+    length_dm                           NUMERIC,
+    flag_length_below_min               BOOLEAN,
+    flag_length_above_max               BOOLEAN,
+    vehicle_class                       INTEGER,
+    vehicle_class_label                 TEXT,
+    source_file                         TEXT,
+    ingested_at                         TIMESTAMP,
     flag_duplicate                      BOOLEAN,
-    flag_speed_delta                    BOOLEAN,
-    speed_ratio                         NUMERIC,
-    any_flag                            BOOLEAN,
-    flag_reasons                        TEXT,   -- semicolon-separated list of triggered flags
-    location_title                      TEXT,
-    street                              TEXT,
-    street_number                       TEXT,
-    zipcode                             TEXT,
-    driving_direction                   TEXT,
-    lat                                 NUMERIC(9,6),
-    lon                                 NUMERIC(9,6),
-    start_date                          TIMESTAMP,
-    deploy_end                          TIMESTAMP,
-    flag_no_coords                      BOOLEAN,
-    processed_at                        TIMESTAMP DEFAULT NOW(),
-    pipeline_path                       TEXT
+    silver_processed_at                 TIMESTAMP DEFAULT NOW()
 );
 
 
--- ── GOLD ─────────────────────────────────────────────────────────────────────
+
+-- ── GOLD - needs revision, update ─────────────────────────────────────────────────────────────────────
 
 -- Hourly aggregated traffic dataset. One row per (geraet_id, standort, datum, stunde). Fully replaced on every run.
 CREATE TABLE IF NOT EXISTS gold.traffic (
@@ -147,6 +151,7 @@ CREATE TABLE IF NOT EXISTS gold.traffic (
     modal_share_lkw         NUMERIC,
     modal_share_krad        NUMERIC
 );
+
 
 
 -- ── PIPELINE LOG ─────────────────────────────────────────────────────────────

@@ -1,3 +1,5 @@
-FROM apache/airflow:2.7.0
+FROM apache/airflow:2.7.3-python3.9
 COPY requirements.airflow.txt /requirements.airflow.txt
-RUN pip install --no-cache-dir -r /requirements.airflow.txt
+RUN pip install --no-cache-dir psycopg2-binary==2.9.9 && \
+    pip install --no-cache-dir --no-deps apache-airflow-providers-postgres==5.2.1 && \
+    pip install --no-cache-dir -r /requirements.airflow.txt

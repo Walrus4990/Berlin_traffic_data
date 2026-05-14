@@ -7,13 +7,21 @@ from datetime import datetime
 
 from utils.db import get_traffic_engine, get_dq_engine, save
 from utils.minio import read_tracker
+from utils.date import yesterday_end
 from etl.ddweb_ingest_traffic import get_chunks, get_chunk_start
-
 
 
 logger = logging.getLogger(__name__)
 
 def check_bronze_completeness(run_type: str) -> dict:
+    """
+    Checks completeness of bronze.traffic against expected segments derived from bronze.mission.
+    For each mission, computes expected parquet filenames, then compares against source_file values
+    in bronze.traffic. Writes two reports to the DQ database:
+    - bronze.mission_completeness: one row per mission with expected vs actual segment counts
+    - bronze.missing_segments: one row per missing filename
+    Returns dict with missions checked and missing segment count.
+    """
     berlin = pytz.timezone("Europe/Berlin")
     run_at = pd.Timestamp.now(tz=berlin)
 
@@ -24,7 +32,7 @@ def check_bronze_completeness(run_type: str) -> dict:
     loaded_set = set(loaded_files["source_file"].tolist())
 
     tracker = read_tracker()
-    today = datetime.now(tz=berlin)
+    ye = yesterday_end()
     summary_rows = []
     missing_rows = []
 
@@ -35,11 +43,11 @@ def check_bronze_completeness(run_type: str) -> dict:
             mission_id = str(row["mission_id"])
 
             if run_type == "initial":
-                chunks = get_chunks(start, min(end, today))
+                chunks = get_chunks(start, min(end, ye))
             else:
                 chunks = get_chunks(
                     get_chunk_start(int(mission_id), start, tracker),
-                    min(end, today)
+                    min(end, ye)
                 )
             expected_files = [
                 f"mission_{mission_id}_{seg_start.strftime('%Y%m%d')}_{seg_end.strftime('%Y%m%d')}.parquet"
