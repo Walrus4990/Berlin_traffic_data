@@ -1,14 +1,14 @@
-#requirements to specify pipeline code requirements inside Airflow
+#requirements to specify pipeline code requirements inside Airflow dev container
 
-pandas==1.5.3
+pandas==2.2.2
 openpyxl==3.1.2
 psycopg2-binary==2.9.9
-SQLAlchemy==1.4.52
+sqlalchemy==1.4.52
 pytz==2024.1
 requests==2.32.3
 beautifulsoup4==4.12.3
 python-dotenv==1.0.1
 numpy==1.24.4
 pyarrow==11.0.0
-minio
-apache-airflow-providers-postgres==5.7.1
+minio==7.2.7
+# apache-airflow-providers-postgres handled in Dockerfile
