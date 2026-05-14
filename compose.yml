@@ -28,7 +28,9 @@ x-airflow-common-env: &airflow-common-env
   DOWNLOAD_DIR: /opt/airflow/data/raw
 
 x-airflow-volumes: &airflow-volumes
-  - ./dags/:/opt/airflow/dags/
+  - ./ts_traffic_initial_load_dag.py:/opt/airflow/dags/ts_traffic_initial_load_dag.py
+  - ./ts_traffic_weekly_load_dag.py:/opt/airflow/dags/ts_traffic_weekly_load_dag.py
+  - ./requirements.txt:/opt/airflow/dags/requirements.txt
   - ./etl/:/opt/airflow/etl/
   - ./utils/:/opt/airflow/utils/
   - ./tests/:/opt/airflow/tests/

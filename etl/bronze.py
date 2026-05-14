@@ -11,7 +11,7 @@ Entry points:
 
 Tables written:
     bronze.mission   — deployment history, append new rows only
-    bronze.location  — location reference, full reload for now (see TODO)
+    bronze.location  — location reference, append new rows only
     bronze.traffic   — weekly append of raw sensor rows
 """
 
@@ -49,107 +49,80 @@ def _table_exists(engine: Engine, table: str, schema: str = "bronze") -> bool:
         ).scalar()
 
 
-def _get_existing_mission_ids(engine: Engine) -> set:
+def _get_existing_ids(engine: Engine, table: str) -> set:
 
-    if not _table_exists(engine, "mission"):
+    if not _table_exists(engine, table):
         return set()
     with engine.connect() as conn:
         rows = conn.execute(
-            text("SELECT mission_id FROM bronze.mission")
+            text(f"SELECT {table}_id FROM bronze.{table}")
         ).fetchall()
     return {r[0] for r in rows}
 
 
 # Bronze layer functions
 
-def ingest_missions(auth: DDWebAuth, engine: Engine) -> tuple[bool, int]:
+def _ingest_ref_table(
+    auth: DDWebAuth,
+    engine: Engine,
+    table: str,
+    date_cols: list[str]) -> int:
     """
-    Fetch missions from DDWeb and load into bronze.mission.
-    Only inserts rows whose (mission_id) key is new.
+    Fetch missions and location from DDWeb and load into bronze.mission.
+    Only inserts new rows
+    """
 
-    Returns:
-        (new_mission_detected, rows_added)
-    """
-    df = fetch_missions(auth).rename(columns=MISSION_RENAME)
-    df["device_id"] = df["device_id"].astype(str).str.strip()
-    for col in ("created_at", "start_date", "end_date"):
+    fetch_functions = {
+        "mission": fetch_missions,
+        "location": fetch_locations
+    }
+
+    rename_schemas = {
+        "mission": MISSION_RENAME,
+        "location": LOCATION_RENAME
+    }
+
+    df = fetch_functions[table](auth).rename(columns=rename_schemas[table])
+
+    for col in date_cols:
         df[col] = df[col].apply(parse_date)
 
     df["ingested_at"] = pd.Timestamp.now()
 
-    existing_ids = _get_existing_mission_ids(engine)
-    truly_new = df[~df["mission_id"].isin(existing_ids)]
+    existing_ids = _get_existing_ids(engine, table)
+    truly_new = df[~df[f"{table}_id"].isin(existing_ids)]
 
     if truly_new.empty:
-        logger.info("No new missions detected — bronze.mission unchanged.")
-        return False, 0
+        logger.info("No new %s detected — bronze.%s unchanged.", table, table)
+        return 0
 
-    save(truly_new, "mission", "bronze", engine)
-    logger.info(
-        "Inserted %d new mission row(s) into bronze.mission.", len(truly_new)
-    )
-    return True, len(truly_new)
+    save(truly_new, table, "bronze", engine)
+    logger.info("Inserted %d new %s row(s) into bronze.%s.", len(truly_new), table, table)
+    return len(truly_new)
 
 
-def ingest_locations(auth: DDWebAuth, engine: Engine) -> int:
-    """
-    Fetch locations from DDWeb and fully replace bronze.location.
-    Returns number of rows written.
-    """
-    df = fetch_locations(auth).rename(columns=LOCATION_RENAME)
-
-    df["created_at"] = df["created_at"].apply(parse_date)
-
-    for col in ("lat", "lon"):
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    df["ingested_at"] = pd.Timestamp.now()
-
-    with engine.begin() as conn:
-        if _table_exists(engine, "location"):
-            conn.execute(text("TRUNCATE TABLE bronze.location"))
-
-    save(df, "location", "bronze", engine)
-    logger.info("Replaced bronze.location: %d rows written.", len(df))
-    return len(df)
-
-
-
-def ingest_ref() -> dict:
+def load_ref_to_bronze() -> tuple[int, int]:
     """
     Full bronze ingestion run for reference files — authenticates with DDWeb, then:
-
         1. fetches missions
-        2. if new mission detected fetch location → full-replace bronze.location (for now)
-
-    Returns dict:
-        new_mission_detected   bool
-        mission_rows_added     int   new rows in bronze.mission
-        location_rows_written  int   rows in bronze.location after refresh
+        2. fetches locations
+    Saves:
+        - new rows in bronze.mission
+        - new rows in bronze.location
     """
     logger.info("=== BRONZE LAYER START ===")
 
     auth = DDWebAuth()
     auth.ensure_authenticated()
-
     engine = get_traffic_engine()
-    # Step 1 — Missions
-    new_mission_detected, mission_rows_added = ingest_missions(auth, engine)
 
-    # Step 2 — Locations (only if new mission detected)
-    if new_mission_detected:
-        location_rows = ingest_locations(auth, engine)
-    else:
-        location_rows = 0
-        logger.info("No new mission — skipping location fetch.")
+    new_mission = _ingest_ref_table(auth, engine, "mission", date_cols=["created_at", "start_date", "end_date"])
+    new_location = _ingest_ref_table(auth, engine, "location", date_cols=["created_at"])
 
-    result = {
-        "new_mission_detected":  new_mission_detected,
-        "mission_rows_added":    mission_rows_added,
-        "location_rows_written": location_rows,
-    }
-    logger.info("=== BRONZE LAYER DONE: %s ===", result)
-    return result
+    logger.info("=== BRONZE LAYER DONE ===")
+    return new_mission, new_location
+
+
 
 
 def load_traffic_to_bronze() -> int:

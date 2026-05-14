@@ -8,3 +8,4 @@ __pycache__/
 data/raw_full/
 move_raw_data_to_vm.bash
 etl/testingest.py
+.env
