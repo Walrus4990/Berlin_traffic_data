@@ -2,6 +2,9 @@ import os
 import json
 from minio import Minio
 import io
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # helper function to connect to MinIO bucket
@@ -14,6 +17,16 @@ def get_minio_client() -> Minio:
     )
 
 MINIO_BUCKET = os.getenv("MINIO_BUCKET")
+
+#helper function to ensure a minio bucket exosts
+
+def ensure_bucket() -> None:
+    client = get_minio_client()
+    if not client.bucket_exists(MINIO_BUCKET):
+        client.make_bucket(MINIO_BUCKET)
+        logger.info("Created MinIO bucket: %s", MINIO_BUCKET)
+    else:
+        logger.info("MinIO bucket already exists: %s", MINIO_BUCKET)
 
 
 # function to help read and write to a tracker file that ensures we do not duplicate download to MinIO

@@ -1,8 +1,7 @@
 
 import pandas as pd
 import logging
-import pytz
-
+from zoneinfo import ZoneInfo
 
 from utils.db import get_traffic_engine, get_dq_engine, save
 
@@ -18,7 +17,7 @@ def check_silver_dq() -> dict:
     Must run after load_traffic_to_silver and before the next run truncates staging.
     Returns dict with row counts for each report.
     """
-    berlin = pytz.timezone("Europe/Berlin")
+    berlin = ZoneInfo("Europe/Berlin")
     run_at = pd.Timestamp.now(tz=berlin)
     engine = get_traffic_engine()
     dq_engine = get_dq_engine()
