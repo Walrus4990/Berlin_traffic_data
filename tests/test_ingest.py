@@ -2,8 +2,8 @@
 
 import pandas as pd
 import logging
-import pytz
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from utils.db import get_traffic_engine, get_dq_engine, save
 from utils.minio import read_tracker
@@ -22,7 +22,7 @@ def check_bronze_completeness(run_type: str) -> dict:
     - bronze.missing_segments: one row per missing filename
     Returns dict with missions checked and missing segment count.
     """
-    berlin = pytz.timezone("Europe/Berlin")
+    berlin = ZoneInfo("Europe/Berlin")
     run_at = pd.Timestamp.now(tz=berlin)
 
     engine= get_traffic_engine()
@@ -38,8 +38,8 @@ def check_bronze_completeness(run_type: str) -> dict:
 
     for _, row in missions.iterrows():
         try:
-            start = berlin.localize(row["start_date"].to_pydatetime())
-            end = berlin.localize(row["end_date"].to_pydatetime())
+            start = row["start_date"].to_pydatetime().replace(tzinfo=berlin)
+            end = row["end_date"].to_pydatetime().replace(tzinfo=berlin)
             mission_id = str(row["mission_id"])
 
             if run_type == "initial":

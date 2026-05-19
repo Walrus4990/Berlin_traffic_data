@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 import pandas as pd
@@ -20,12 +20,8 @@ def get_dq_engine():
 
 def save(df: pd.DataFrame, table_name: str, schema: str, engine) -> None:
     try:
-        raw_conn = engine.raw_connection()
-        try:
-            df.to_sql(table_name, raw_conn, schema=schema, if_exists="append", index=False)
-            raw_conn.commit()
-        finally:
-            raw_conn.close()
+        with engine.begin() as conn:
+            df.to_sql(table_name, conn, schema=schema, if_exists="append", index=False)
     except Exception as e:
         logger.error(f"save failed for {schema}.{table_name}: {e}")
         raise

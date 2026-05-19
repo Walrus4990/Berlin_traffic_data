@@ -35,3 +35,6 @@ hour buckets (07:00–09:00) are correct.
 **Rule: never apply timezone conversion in silver or gold.** Timestamps are
 naive but implicitly Berlin local throughout. Applying tz conversion at a later
 stage would corrupt the data.
+
+**Audit timestamps**
+Audit timestamps (ingested_at, processed_at) are stored as timezone-aware timestamps in Europe/Berlin. These columns are for human inspection only and carry no pipeline logic. pd.Timestamp.now(tz=ZoneInfo("Europe/Berlin")) is used consistently across all ETL layers. This is distinct from data timestamps, which follow the naive Berlin local time rules above.

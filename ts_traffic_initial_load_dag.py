@@ -1,7 +1,7 @@
 import os
 import pendulum
 from datetime import timedelta
-from airflow.decorators import dag, task
+from airflow.sdk import dag, task
 
 DAG_DIR = os.path.dirname(os.path.abspath(__file__))
 REQUIREMENTS_PATH = os.path.join(DAG_DIR, "requirements.txt")
