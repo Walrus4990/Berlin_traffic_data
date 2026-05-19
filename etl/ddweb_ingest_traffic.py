@@ -5,23 +5,20 @@
     # 2. Single downloader for all data chunks for one mission_id
     # 3. Orchestrator (loops over all missions)
 
-from __future__ import annotations
 import time
 import logging
 import calendar
-from pathlib import Path
-from datetime import datetime, timezone, timedelta
-import pytz
 import io
 import requests
-import os
 import pandas as pd
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from etl.ddweb_auth import DDWebAuth
 from etl.ddweb_ingest_ref import fetch_missions
 from utils.date import parse_date, yesterday_end
 from utils.schema import TRAFFIC_COLS_DROP, TRAFFIC_RENAME
-from utils.minio import get_minio_client, MINIO_BUCKET, read_tracker
+from utils.minio import get_minio_client, ensure_bucket, MINIO_BUCKET, read_tracker
 from utils.db import get_dq_engine, save
 
 
@@ -66,7 +63,7 @@ def get_chunk_start(mission_id: int, from_date: datetime, tracker: dict) -> date
     entry = tracker.get(str(mission_id))
     if entry and entry.get("last_downloaded_to"):
         last = datetime.strptime(entry["last_downloaded_to"], "%Y%m%d")
-        last = pytz.timezone("Europe/Berlin").localize(last)
+        last = last.replace(tzinfo=ZoneInfo("Europe/Berlin"))
         return last + timedelta(days=1)
     return from_date
 
@@ -94,7 +91,7 @@ def get_chunks(from_date: datetime, to_date: datetime) -> list[tuple[datetime, d
 def _write_chunk_event(mission_id, chunk_start, chunk_end, status, reason):
     """helper to record error messages of failed downloads"""
     row = pd.DataFrame([{
-        "run_at": pd.Timestamp.now(tz="Europe/Berlin"),
+        "run_at": pd.Timestamp.now(tz=ZoneInfo("Europe/Berlin")),
         "mission_id": str(mission_id),
         "segment_start": chunk_start.date(),
         "segment_end": chunk_end.date(),
@@ -102,7 +99,7 @@ def _write_chunk_event(mission_id, chunk_start, chunk_end, status, reason):
         "reason": reason,
     }])
     dq_engine = get_dq_engine()
-    save(row, "chunk_download_events", "bronze", dq_engine)
+    save(row, "segment_download_events", "bronze", dq_engine)
 
 # --- Build payload to pass parametres to DDWEB portal
 
@@ -293,6 +290,7 @@ def download_mission(
 def complete_download() -> None:
 
     ye = yesterday_end()
+    ensure_bucket()
     tracker = read_tracker()
 
     auth = DDWebAuth()
@@ -318,6 +316,10 @@ def complete_download() -> None:
 def weekly_download() -> None:
 
     ye = yesterday_end()
+    try:
+        ensure_bucket()
+    except Exception as e:
+        logger.warning("Could not verify MinIO bucket: %s", e)
     tracker = read_tracker()
 
     auth = DDWebAuth()

@@ -60,7 +60,7 @@ def load_traffic_to_silver() -> int:
             mission_id,
             device_id,
             date_raw,
-            TO_TIMESTAMP(date_raw, 'DD/MM/YYYY HH24:MI:SS') AS date_parsed,
+            TO_TIMESTAMP(date_raw, 'YYYY-MM-DD HH24:MI:SS') AS date_parsed,
 
             speed_entry,
             speed_exit,

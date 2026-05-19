@@ -1,6 +1,4 @@
 """
-bronze.py — Bronze layer ingestion
-====================================
 Fetches reference and traffic data and loads into PostgreSQL bronze schema.
 
 Entry points:
@@ -8,20 +6,18 @@ Entry points:
                                 → bronze.mission, bronze.location
     load_traffic_to_bronze()  — reads parquet files from MinIO
                                 → bronze.traffic
-
 Tables written:
     bronze.mission   — deployment history, append new rows only
     bronze.location  — location reference, append new rows only
     bronze.traffic   — weekly append of raw sensor rows
 """
 
-from __future__ import annotations
 import logging
 import warnings
 import pandas as pd
 from sqlalchemy.engine import Engine
 from sqlalchemy import text
-from typing import Set, Tuple
+from zoneinfo import ZoneInfo
 import io
 
 from utils.db import get_traffic_engine, save, get_loaded_files
@@ -87,7 +83,7 @@ def _ingest_ref_table(
     for col in date_cols:
         df[col] = df[col].apply(parse_date)
 
-    df["ingested_at"] = pd.Timestamp.now()
+    df["ingested_at"] = pd.Timestamp.now(tz=ZoneInfo("Europe/Berlin"))
 
     existing_ids = _get_existing_ids(engine, table)
     truly_new = df[~df[f"{table}_id"].isin(existing_ids)]
@@ -123,8 +119,6 @@ def load_ref_to_bronze() -> tuple[int, int]:
     return new_mission, new_location
 
 
-
-
 def load_traffic_to_bronze() -> int:
     """
     List new parquet files from MinIO and append to bronze.traffic.
@@ -143,6 +137,8 @@ def load_traffic_to_bronze() -> int:
 
     # Check what's already loaded
     already_loaded = get_loaded_files(engine, "bronze", "traffic")
+    logger.info("Found %d parquet files in MinIO, %d already loaded, %d new.",
+            len(traffic_files), len(already_loaded), len(traffic_files) - len(already_loaded))
     total_rows = 0
 
     for filename in traffic_files:
@@ -154,7 +150,7 @@ def load_traffic_to_bronze() -> int:
         response = get_minio_client().get_object(MINIO_BUCKET, filename)
         df = pd.read_parquet(io.BytesIO(response.read()))
         df["source_file"] = filename
-        df["ingested_at"] = pd.Timestamp.now()
+        df["ingested_at"] = pd.Timestamp.now(tz=ZoneInfo("Europe/Berlin"))
         save(df, "traffic", "bronze", engine)
         total_rows += len(df)
         logger.info("  Loaded %d rows from %s", len(df), filename)
