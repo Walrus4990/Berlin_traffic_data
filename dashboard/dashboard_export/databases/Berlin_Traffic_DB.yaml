@@ -1,0 +1,17 @@
+database_name: Berlin Traffic DB
+sqlalchemy_uri: postgresql+psycopg2://traffic:XXXXXXXXXX@postgres-traffic:5432/berlin_traffic
+cache_timeout: null
+expose_in_sqllab: true
+allow_run_async: false
+allow_ctas: false
+allow_cvas: false
+allow_dml: false
+allow_file_upload: false
+extra:
+  metadata_params: {}
+  engine_params: {}
+  metadata_cache_timeout: {}
+  schemas_allowed_for_file_upload: []
+impersonate_user: false
+uuid: e3aa19f9-99fc-48c4-9978-4e4568925270
+version: 1.0.0
