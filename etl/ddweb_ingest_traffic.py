@@ -269,7 +269,7 @@ def download_mission(
             analysis_id = _do_analyze(auth.session, mission_id, payload)
             _get_partial_result(auth.session, analysis_id)
             file_guid, _ = _get_file_metadata(auth.session, analysis_id)
-            print("Waiting 10s for portal to prepare file...")
+            logger.info("Waiting 10s for portal to prepare file...")
             time.sleep(10)
             filepath = _download_into_parquet(auth.session, file_guid, mission_id, chunk_start, chunk_end)
             if filepath:

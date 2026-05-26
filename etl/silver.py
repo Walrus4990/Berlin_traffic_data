@@ -1,9 +1,7 @@
 """
 Reads from bronze PostgreSQL tables, applies the full cleaning routine in Postgres database,
 writes to silver tables.
-
 Tables written:
-silver_mission_location  — one row per active device with current location + coords
 silver_traffic         — cleaned rows (append)
 
 """

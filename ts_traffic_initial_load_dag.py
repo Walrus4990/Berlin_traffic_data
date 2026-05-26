@@ -64,6 +64,7 @@ def ts_traffic_initial_load():
         complete_download()
         logger.info("Initial download finished at %s", datetime.now(tz=pytz.timezone("Europe/Berlin")))
 
+
     @task.virtualenv(requirements=REQUIREMENTS,
                      #execution_timeout=timedelta(hours=5)  #commented out to fail fast uncomment in prod
     )
@@ -91,6 +92,20 @@ def ts_traffic_initial_load():
         logger.info("Validation result: %s", result)
 
     @task.virtualenv(requirements=REQUIREMENTS,
+                     #execution_timeout=timedelta(minutes=15)  #commented out to fail fast uncomment in prod
+    )
+    def run_build_mission_location_to_silver(dag_dir: str) -> None:
+        """Merge missions and locations from bronze.mission, bronze.location into silver_ref_mission_location
+        Identifies sensor"""
+        import logging
+        import sys
+        sys.path.insert(0, dag_dir)
+        from etl.silver_ref import build_mission_location_to_silver
+        logger = logging.getLogger(__name__)
+        rows = build_mission_location_to_silver("initial")
+        logger.info("%d new rows rows appended to silver_ref_mission_location", rows)
+
+    @task.virtualenv(requirements=REQUIREMENTS,
                      #execution_timeout=timedelta(hours=3)  #commented out to fail fast uncomment in prod
     )
     def run_load_traffic_to_silver(dag_dir: str) -> None:
@@ -107,7 +122,7 @@ def ts_traffic_initial_load():
                      #execution_timeout=timedelta(hours=3)  #commented out to fail fast uncomment in prod
     )
     def run_validate_silver(dag_dir: str) -> None:
-        """Runs DQ checks on silver.staging_traffic and writes flag reports to DQ database."""
+        """Merges """
         import logging
         import sys
         sys.path.insert(0, dag_dir)
@@ -116,21 +131,51 @@ def ts_traffic_initial_load():
         result = check_silver_dq()
         logger.info("Validation result: %s", result)
 
+    @task.virtualenv(requirements=REQUIREMENTS,
+                     #execution_timeout=timedelta(hours=3)  #commented out to fail fast uncomment in prod
+    )
+    def run_load_all_to_gold(dag_dir: str) -> None:
+        """Aggregates silver.traffic into hourly data with vehcle count and speeds.
+        Merges traffic data to silver.ref_mission_location. Updates sensor pairs."""
+        import logging
+        import sys
+        sys.path.insert(0, dag_dir)
+        from etl.gold import load_all_to_gold
+        logger = logging.getLogger(__name__)
+        rows_inserted, load_date = load_all_to_gold("initial")
+        logger.info("%d new rows appended to gold.export and export watermark updated with date %s", rows_inserted, load_date)
 
+    @task.virtualenv(requirements=REQUIREMENTS,
+                     #execution_timeout=timedelta(hours=3)  #commented out to fail fast uncomment in prod
+    )
+    def run_load_dashboard(dag_dir: str) -> None:
+        """Aggregates gold.export into daily data. Updates SQL queries for dashboard"""
+        import logging
+        import sys
+        sys.path.insert(0, dag_dir)
+        from etl.dashboard import load_dashboard
+        logger = logging.getLogger(__name__)
+        rows_inserted, load_date = load_dashboard("initial")
+        logger.info("%d new rows appended to gold.dashboard and dashboard watermark updated with date %s", rows_inserted, load_date)
 
     # ── Dependencies ──────────────────────────────────────────────────────────
-    bronze_ref = run_load_ref_to_bronze(dag_dir=DAG_DIR)
     complete_traffic_download = run_complete_download(dag_dir=DAG_DIR)
+    bronze_ref = run_load_ref_to_bronze(dag_dir=DAG_DIR)
     bronze_traffic = run_load_traffic_to_bronze(dag_dir=DAG_DIR)
     bronze_validate = run_validate_bronze(dag_dir=DAG_DIR)
+    silver_ref = run_build_mission_location_to_silver(dag_dir=DAG_DIR)
     silver_traffic = run_load_traffic_to_silver(dag_dir=DAG_DIR)
     silver_validate = run_validate_silver(dag_dir=DAG_DIR)
+    gold_export = run_load_all_to_gold(dag_dir=DAG_DIR)
+    gold_dashboard = run_load_dashboard(dag_dir=DAG_DIR)
+    #gold_publish =
 
 
     [bronze_ref, complete_traffic_download] >> bronze_traffic >> bronze_validate
     bronze_traffic >> silver_traffic
     silver_traffic >> silver_validate
-
+    bronze_ref>>silver_ref
+    [silver_ref, silver_traffic] >> gold_export >> gold_dashboard
 
 
 ts_traffic_initial_load()

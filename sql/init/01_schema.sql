@@ -57,27 +57,24 @@ CREATE INDEX IF NOT EXISTS idx_bronze_traffic_source_file ON bronze.traffic (sou
 
 -- ── SILVER ───────────────────────────────────────────────────────────────────
 
---
-CREATE TABLE IF NOT EXISTS silver.ref_mission_location ( --needs revision/update
-    -- from bronze.mission
+
+CREATE TABLE IF NOT EXISTS silver.ref_mission_location (
     mission_id                  INTEGER,
     created_at                  TIMESTAMP,
     start_date                  TIMESTAMP,
     end_date                    TIMESTAMP,
-    description                 TEXT,
-    location_title              TEXT,
-    city                        TEXT,
+    device_id                   TEXT,
     street                      TEXT,
     street_number               TEXT,
     zipcode                     TEXT,
-    device_id                   TEXT,
-    device_type                 TEXT,
-    ingested_at                 TIMESTAMP,
-    driving_direction           TEXT,
-    opposite_direction          TEXT,
+    city                        TEXT,
+    location_description        TEXT,
     lat                         NUMERIC(9,6),
     lon                         NUMERIC(9,6),
-    deploy_end                  TIMESTAMP,
+    is_pair                     BOOLEAN,
+    paired_mission_id           INTEGER,
+    driving_direction           TEXT,
+    opposite_direction          TEXT,
     updated_at                  TIMESTAMP DEFAULT NOW()
 );
 
@@ -123,68 +120,86 @@ CREATE TABLE IF NOT EXISTS silver.staging_traffic (
 );
 
 
+-- ── GOLD  ─────────────────────────────────────────────────────────────────────
 
--- ── GOLD - needs revision, update ─────────────────────────────────────────────────────────────────────
-
--- Hourly aggregated traffic dataset. One row per (geraet_id, standort, datum, stunde). Fully replaced on every run.
-CREATE TABLE IF NOT EXISTS gold.traffic (
-    -- group keys
-    datum                   DATE,
-    datum_iso               TEXT,               -- ISO date string YYYY-MM-DD (display convenience)
-    stunde                  SMALLINT,           -- hour of day 0–23
-    geraet_id               TEXT,               -- permanent sensor ID
-    standort                TEXT,               -- street name
-    latitude                NUMERIC(9,6),
-    longitude               NUMERIC(9,6),
-    kfz                     INTEGER,            -- total motorised vehicles (all classes)
-    pkw                     INTEGER,            -- Pkw — cars
-    lkw                     INTEGER,            -- Lkw — lorries
-    lfw                     INTEGER,            -- Lfw — delivery vans
-    krad                    INTEGER,            -- Krad — motorcycles
-    fahrrad                 INTEGER,            -- Fahrrad — bicycles
-    v_kfz                   NUMERIC,            -- avg speed all motorised vehicles
-    v_pkw                   NUMERIC,            -- avg speed cars
-    v_lkw                   NUMERIC,            -- avg speed lorries
-    v85                     NUMERIC,            -- 85th-percentile speed (excl. krad & fahrrad)
-    modal_share_pkw         NUMERIC,
-    modal_share_fahrrad     NUMERIC,
-    modal_share_lkw         NUMERIC,
-    modal_share_krad        NUMERIC
+-- Watermark table to track upserting & deduplication when adding rows. similar role to json tracker in bronze layer
+CREATE TABLE IF NOT EXISTS gold.watermark (
+    table_name      TEXT UNIQUE,
+    last_processed  TIMESTAMP NOT NULL DEFAULT '1970-01-01'
 );
 
+-- Hourly aggregated traffic dataset. One row per (mission_id, datum, stunde).
+CREATE TABLE IF NOT EXISTS gold.export (
+    mission_id                  INTEGER,
+    device_id                   TEXT,
+    start_date                  TIMESTAMP,
+    end_date                    TIMESTAMP,
+    date                        DATE,
+    hour                        SMALLINT,
+    street                      TEXT,
+    street_number               TEXT,
+    zipcode                     TEXT,
+    city                        TEXT,
+    location_description        TEXT,
+    lat                         NUMERIC(9,6),
+    lon                         NUMERIC(9,6),
+    motorised                   INTEGER, -- total motorised vehicles (all classes)
+    car                         INTEGER,
+    bicycle                     INTEGER,
+    delivery_van                INTEGER,
+    motorbike                   INTEGER,
+    lorry                       INTEGER,
+    other_motorised_vehicle     INTEGER,
+    v_all_motorised             NUMERIC,
+    v_car                       NUMERIC,
+    v_delivery_van              NUMERIC,
+    v_motorbike                 NUMERIC,
+    v_lorry                     NUMERIC,
+    v_other                     NUMERIC,
+    v85                         NUMERIC,    -- 85th-percentile speed (excl. fahrrad)
+    modal_share_car             NUMERIC,
+    modal_share_bicycle         NUMERIC,
+    modal_share_delivery_van    NUMERIC,
+    modal_share_motorbike       NUMERIC,
+    modal_share_lorry           NUMERIC,
+    is_pair                     BOOLEAN,
+    paired_mission_id           INTEGER,
+    driving_direction           TEXT,
+    opposite_direction          TEXT,
+    gold_processed_at           TIMESTAMP DEFAULT NOW(),
+    UNIQUE (mission_id, date, hour) --- adds condition that these three together must not have duplicates
+);
 
-
--- ── PIPELINE LOG ─────────────────────────────────────────────────────────────
-
--- CREATE TABLE IF NOT EXISTS public.pipeline_log (
---     run_at              TIMESTAMP DEFAULT NOW(),
---     dag_id              TEXT,
---     status              TEXT,              -- success / failure
---     rows_ingested       INTEGER,
---     neue_deployments    BOOLEAN,
---     notes               TEXT
--- );
-
--- Compatibility view for Superset dashboard
-CREATE OR REPLACE VIEW public.traffic_berlin AS
-SELECT
-  datum,
-  datum_iso::DATE AS datum_iso,
-  stunde,
-  geraet_id,
-  standort,
-  latitude,
-  longitude,
-  COALESCE(kfz, 0) AS kfz,
-  COALESCE(pkw, 0) AS pkw,
-  COALESCE(lkw, 0) AS lkw,
-  COALESCE(lfw, 0) AS lfw,
-  COALESCE(krad, 0) AS krad,
-  COALESCE(fahrrad, 0) AS fahrrad,
-  v_kfz, v_pkw, v_lkw, v85,
-  COALESCE(modal_share_pkw, 0) AS modal_share_pkw,
-  COALESCE(modal_share_fahrrad, 0) AS modal_share_fahrrad,
-  COALESCE(modal_share_lkw, 0) AS modal_share_lkw,
-  COALESCE(modal_share_krad, 0) AS modal_share_krad
-FROM gold.traffic
-WHERE datum_iso IS NOT NULL AND datum_iso != 'nan';
+CREATE TABLE IF NOT EXISTS gold.dashboard ( -- one row per day
+    mission_id                  INTEGER,
+    start_date                  TIMESTAMP,
+    end_date                    TIMESTAMP,
+    date                        DATE,
+    streetnr                    TEXT,
+    city                        TEXT,
+    location_description        TEXT,
+    lat                         NUMERIC(9,6),
+    lon                         NUMERIC(9,6),
+    car                         INTEGER,
+    bicycle                     INTEGER,
+    delivery_van                INTEGER,
+    motorbike                   INTEGER,
+    lorry                       INTEGER,
+    other                       INTEGER,
+    v_car                       NUMERIC,
+    v_delivery_van              NUMERIC,
+    v_motorbike                 NUMERIC,
+    v_lorry                     NUMERIC,
+    v_other                     NUMERIC,
+    v85                         NUMERIC,    -- 85th-percentile speed (excl. fahrrad)
+    modal_share_car             NUMERIC,
+    modal_share_bicycle         NUMERIC,
+    modal_share_delivery_van    NUMERIC,
+    modal_share_motorbike       NUMERIC,
+    modal_share_lorry           NUMERIC,
+    modal_share_other           NUMERIC,
+    is_pair                     BOOLEAN,
+    paired_mission_id           INTEGER,
+    dashboard_processed_at      TIMESTAMP DEFAULT NOW(),
+    UNIQUE (mission_id, date) --- adds condition that these three together must not have duplicates
+);

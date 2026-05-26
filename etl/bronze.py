@@ -1,7 +1,6 @@
 """
 Fetches reference and traffic data and loads into PostgreSQL bronze schema.
 
-Entry points:
     ingest_ref()              — fetches missions + locations from DDWeb portal
                                 → bronze.mission, bronze.location
     load_traffic_to_bronze()  — reads parquet files from MinIO
