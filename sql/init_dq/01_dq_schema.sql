@@ -63,3 +63,11 @@ CREATE TABLE IF NOT EXISTS silver.vehicle_length_profile (
     pct_below_min               NUMERIC(6,4),
     pct_above_max               NUMERIC(6,4)
 );
+
+----------------- gold ---------------
+
+CREATE TABLE IF NOT EXISTS gold.missing_watermark_alerts (
+    run_at              TIMESTAMP NOT NULL,
+    message             TEXT NOT NULL,
+    recovered_timestamp TIMESTAMP
+);

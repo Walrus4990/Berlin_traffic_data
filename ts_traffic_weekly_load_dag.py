@@ -123,7 +123,7 @@ def ts_traffic_weekly_load():
         import logging
         import sys
         sys.path.insert(0, dag_dir)
-        from etl.gold_data_layer import run_gold
+        from etl.gold import run_gold
         from utils.db import get_traffic_engine
         logger = logging.getLogger(__name__)
         engine= get_traffic_engine()

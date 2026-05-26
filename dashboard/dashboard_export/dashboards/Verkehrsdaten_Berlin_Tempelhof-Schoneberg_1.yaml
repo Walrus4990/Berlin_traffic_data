@@ -1,0 +1,325 @@
+dashboard_title: "Verkehrsdaten Berlin \u2014 Tempelhof-Sch\xF6neberg"
+description: null
+css: "@font-face {\n  font-family: \"BerlinType\";\n  src: url(\"https://storage.data-hub.berlin/assets/fonts/BerlinTypeWeb-Regular.eot\"\
+  );\n  src: url(\"https://storage.data-hub.berlin/assets/fonts/BerlinTypeWeb-Regular.eot?#iefix\"\
+  ) format(\"embedded-opentype\"),\n       url(\"https://storage.data-hub.berlin/assets/fonts/BerlinTypeWeb-Regular.woff2\"\
+  ) format(\"woff2\"),\n       url(\"https://storage.data-hub.berlin/assets/fonts/BerlinTypeWeb-Regular.woff\"\
+  ) format(\"woff\");\n  font-weight: 400;\n  font-style: normal;\n}\n\n@font-face\
+  \ {\n  font-family: \"BerlinType\";\n  src: url(\"https://storage.data-hub.berlin/assets/fonts/BerlinTypeWeb-Bold.eot\"\
+  );\n  src: url(\"https://storage.data-hub.berlin/assets/fonts/BerlinTypeWeb-Bold.eot?#iefix\"\
+  ) format(\"embedded-opentype\"),\n       url(\"https://storage.data-hub.berlin/assets/fonts/BerlinTypeWeb-Bold.woff2\"\
+  ) format(\"woff2\"),\n       url(\"https://storage.data-hub.berlin/assets/fonts/BerlinTypeWeb-Bold.woff\"\
+  ) format(\"woff\");\n  font-weight: 700;\n  font-style: normal;\n}\n\n.dashboard-content\
+  \ * {\n  font-family: \"BerlinType\", system-ui, -apple-system, Roboto, Arial, sans-serif;\n\
+  }"
+slug: null
+certified_by: ''
+certification_details: ''
+published: false
+uuid: a6b70d8b-48e8-4e42-abc3-4bf30ae117dd
+position:
+  CHART-1vxmZjDH_YsfpBSEcYi9_:
+    children: []
+    id: CHART-1vxmZjDH_YsfpBSEcYi9_
+    meta:
+      chartId: 7
+      height: 50
+      sliceName: Modalsplit
+      uuid: 4ae82ee3-ba77-43bf-8d94-8081893969a1
+      width: 4
+    parents:
+    - ROOT_ID
+    - GRID_ID
+    - ROW-ci6Nw-DRZx54rG0ceJ1o5
+    - COLUMN-04EopeOlx32Uu2bolfO2h
+    type: CHART
+  CHART-2ryc5m7Szw_D89RnUlzn7:
+    children: []
+    id: CHART-2ryc5m7Szw_D89RnUlzn7
+    meta:
+      chartId: 6
+      height: 50
+      sliceName: "Messstellen \u2014 Berliner Sensorkarte"
+      uuid: 551c7328-270e-4cc7-b865-62b9bf4338fa
+      width: 4
+    parents:
+    - ROOT_ID
+    - GRID_ID
+    - ROW-ci6Nw-DRZx54rG0ceJ1o5
+    - COLUMN-RVXQAp67nc42S60boS2-P
+    type: CHART
+  CHART-XWLNtcJxnxrJoftWkr53S:
+    children: []
+    id: CHART-XWLNtcJxnxrJoftWkr53S
+    meta:
+      chartId: 2
+      height: 50
+      sliceName: "V85 \u2014 Perzentilgeschwindigkeit"
+      uuid: 65f35436-58ab-4d2d-91c7-f55c3dcea76e
+      width: 4
+    parents:
+    - ROOT_ID
+    - GRID_ID
+    - ROW-ci6Nw-DRZx54rG0ceJ1o5
+    - COLUMN-C-YahA6jlmCZXdFD1oDRt
+    type: CHART
+  CHART-XzdkrKh5OuyXI2q4xiGiQ:
+    children: []
+    id: CHART-XzdkrKh5OuyXI2q4xiGiQ
+    meta:
+      chartId: 8
+      height: 50
+      sliceName: "\xDCbersicht Messstellen"
+      uuid: 87bb3e4c-ae45-49f9-b6f3-f9cc50796416
+      width: 4
+    parents:
+    - ROOT_ID
+    - GRID_ID
+    - ROW-pvB3Jg62nkEcxMPCz0MVj
+    - COLUMN-v9-H-N6cGufyP1PxQRi_q
+    type: CHART
+  CHART-afIIjbnTZRW3PLTggMVxy:
+    children: []
+    id: CHART-afIIjbnTZRW3PLTggMVxy
+    meta:
+      chartId: 4
+      height: 50
+      sliceName: "Durchfahrten pro Stunde \u2014 Ganglinie"
+      uuid: 6634934d-4725-443d-9b70-782e20df8664
+      width: 6
+    parents:
+    - ROOT_ID
+    - GRID_ID
+    - ROW-pvB3Jg62nkEcxMPCz0MVj
+    - COLUMN-BlSK4aqbJDMFiFn5Yj5v2
+    type: CHART
+  COLUMN-04EopeOlx32Uu2bolfO2h:
+    children:
+    - CHART-1vxmZjDH_YsfpBSEcYi9_
+    id: COLUMN-04EopeOlx32Uu2bolfO2h
+    meta:
+      background: BACKGROUND_TRANSPARENT
+      width: 4
+    parents:
+    - ROOT_ID
+    - GRID_ID
+    - ROW-ci6Nw-DRZx54rG0ceJ1o5
+    type: COLUMN
+  COLUMN-BlSK4aqbJDMFiFn5Yj5v2:
+    children:
+    - CHART-afIIjbnTZRW3PLTggMVxy
+    id: COLUMN-BlSK4aqbJDMFiFn5Yj5v2
+    meta:
+      background: BACKGROUND_TRANSPARENT
+      width: 6
+    parents:
+    - ROOT_ID
+    - GRID_ID
+    - ROW-pvB3Jg62nkEcxMPCz0MVj
+    type: COLUMN
+  COLUMN-C-YahA6jlmCZXdFD1oDRt:
+    children:
+    - CHART-XWLNtcJxnxrJoftWkr53S
+    id: COLUMN-C-YahA6jlmCZXdFD1oDRt
+    meta:
+      background: BACKGROUND_TRANSPARENT
+      width: 4
+    parents:
+    - ROOT_ID
+    - GRID_ID
+    - ROW-ci6Nw-DRZx54rG0ceJ1o5
+    type: COLUMN
+  COLUMN-RVXQAp67nc42S60boS2-P:
+    children:
+    - CHART-2ryc5m7Szw_D89RnUlzn7
+    id: COLUMN-RVXQAp67nc42S60boS2-P
+    meta:
+      background: BACKGROUND_TRANSPARENT
+      width: 4
+    parents:
+    - ROOT_ID
+    - GRID_ID
+    - ROW-ci6Nw-DRZx54rG0ceJ1o5
+    type: COLUMN
+  COLUMN-v9-H-N6cGufyP1PxQRi_q:
+    children:
+    - CHART-XzdkrKh5OuyXI2q4xiGiQ
+    id: COLUMN-v9-H-N6cGufyP1PxQRi_q
+    meta:
+      background: BACKGROUND_TRANSPARENT
+      width: 6
+    parents:
+    - ROOT_ID
+    - GRID_ID
+    - ROW-pvB3Jg62nkEcxMPCz0MVj
+    type: COLUMN
+  DASHBOARD_VERSION_KEY: v2
+  GRID_ID:
+    children:
+    - ROW-ci6Nw-DRZx54rG0ceJ1o5
+    - ROW-pvB3Jg62nkEcxMPCz0MVj
+    id: GRID_ID
+    parents:
+    - ROOT_ID
+    type: GRID
+  HEADER_ID:
+    id: HEADER_ID
+    meta:
+      text: "Verkehrsdaten Berlin \u2014 Tempelhof-Sch\xF6neberg"
+    type: HEADER
+  ROOT_ID:
+    children:
+    - GRID_ID
+    id: ROOT_ID
+    type: ROOT
+  ROW-ci6Nw-DRZx54rG0ceJ1o5:
+    children:
+    - COLUMN-RVXQAp67nc42S60boS2-P
+    - COLUMN-04EopeOlx32Uu2bolfO2h
+    - COLUMN-C-YahA6jlmCZXdFD1oDRt
+    id: ROW-ci6Nw-DRZx54rG0ceJ1o5
+    meta:
+      background: BACKGROUND_TRANSPARENT
+    parents:
+    - ROOT_ID
+    - GRID_ID
+    type: ROW
+  ROW-pvB3Jg62nkEcxMPCz0MVj:
+    children:
+    - COLUMN-BlSK4aqbJDMFiFn5Yj5v2
+    - COLUMN-v9-H-N6cGufyP1PxQRi_q
+    id: ROW-pvB3Jg62nkEcxMPCz0MVj
+    meta:
+      background: BACKGROUND_TRANSPARENT
+    parents:
+    - ROOT_ID
+    - GRID_ID
+    type: ROW
+metadata:
+  label_colors: {}
+  timed_refresh_immune_slices: []
+  expanded_slices: {}
+  refresh_frequency: 0
+  color_scheme: ''
+  cross_filters_enabled: true
+  chart_configuration:
+    '4':
+      id: 4
+      crossFilters:
+        scope: global
+        chartsInScope:
+        - 2
+        - 6
+        - 7
+        - 8
+    '6':
+      id: 6
+      crossFilters:
+        scope: global
+        chartsInScope:
+        - 2
+        - 4
+        - 7
+        - 8
+    '7':
+      id: 7
+      crossFilters:
+        scope: global
+        chartsInScope:
+        - 2
+        - 4
+        - 6
+        - 8
+    '8':
+      id: 8
+      crossFilters:
+        scope: global
+        chartsInScope:
+        - 2
+        - 4
+        - 6
+        - 7
+  global_chart_configuration:
+    scope:
+      rootPath:
+      - ROOT_ID
+      excluded:
+      - 3
+    chartsInScope:
+    - 2
+    - 4
+    - 6
+    - 7
+    - 8
+  default_filters: '{}'
+  shared_label_colors: []
+  map_label_colors:
+    PKW (Auto): '#f5b4cb'
+    Fahrrad: '#00aa84'
+    Lieferwagen: '#9185be'
+    Motorrad: '#f39300'
+    LKW: '#004f9f'
+    Sonstige: '#e6e6e6'
+  color_scheme_domain: []
+  native_filter_configuration:
+  - cascadeParentIds: []
+    chartsInScope:
+    - 2
+    - 4
+    - 6
+    - 7
+    - 8
+    controlValues:
+      enableEmptyFilter: false
+    defaultDataMask:
+      extraFormData:
+        time_range: Last 30 days
+      filterState: {}
+      ownState: {}
+    description: ''
+    filterType: filter_time
+    id: NATIVE_FILTER-FrPM8a6dWu01M90SYHKda
+    name: Zeitraum
+    scope:
+      excluded: []
+      rootPath:
+      - ROOT_ID
+    tabsInScope: []
+    targets:
+    - {}
+    type: NATIVE_FILTER
+  - id: NATIVE_FILTER-NRqJPc2ymFR7MFFxvUO4E
+    controlValues:
+      enableEmptyFilter: false
+      defaultToFirstItem: false
+      creatable: false
+      multiSelect: true
+      searchAllOptions: true
+      inverseSelection: false
+    name: Standort
+    filterType: filter_select
+    targets:
+    - column:
+        name: streetnr
+      datasetUuid: a03bb584-1b83-4fa8-a833-a6d0c6173580
+    defaultDataMask:
+      extraFormData: {}
+      filterState: {}
+      ownState: {}
+    cascadeParentIds: []
+    scope:
+      rootPath:
+      - ROOT_ID
+      excluded: []
+    type: NATIVE_FILTER
+    description: ''
+    chartsInScope:
+    - 2
+    - 4
+    - 6
+    - 7
+    - 8
+    tabsInScope: []
+  filter_bar_orientation: HORIZONTAL
+theme_uuid: null
+version: 1.0.0
