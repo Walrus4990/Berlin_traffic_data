@@ -406,3 +406,49 @@ Suggestion: Add a v85_sample_n column to gold.export recording the count of vehi
 Summary
 #SeverityAreaIssue1HighADR-001Filename-tracker coupling is fragile, needs versioned contract2MediumADR-001consecutive_empty_weeks reset logic is unspecified5HighADR-002Ephemeral staging destroys audit trail within 24h6MediumADR-002Dedup key may silently drop coincidental duplicates in dense traffic8MediumADR-003Single large transaction risks lock contention and OOM9HighADR-003Unbounded historical reprocessing on any location change10LowADR-003Sparse-hour v85 is misleading without sample count3LowADR-001Alert threshold is undifferentiated across mission types4LowADR-001max_active_runs=1 is not a safe concurrency guarantee7LowADR-002Bike speed ceiling source undocumented
 Issues 1, 5, and 9 are the ones I'd address before this goes to production. The rest are quality-of-life improvements, but they will bite you eventually.
+
+
+## ToDos gold
+gold.py — Outstanding Issues
+🔴 Still Broken (Critical)
+1. load_all_to_gold GROUP BY — illegal AS aliases
+sqlGROUP BY
+    t.date_parsed::date,
+    EXTRACT(HOUR FROM t.date_parsed) AS hour        -- ← AS not allowed in GROUP BY
+    EXTRACT(ISODOW FROM t.date_parsed)::SMALLINT AS day_of_week_num,  -- ← same
+    CASE ... END AS day_of_week_name,               -- ← same
+PostgreSQL doesn't allow AS aliases in GROUP BY. Must be bare expressions:
+sqlGROUP BY
+    t.date_parsed::date,
+    EXTRACT(HOUR FROM t.date_parsed),
+    EXTRACT(ISODOW FROM t.date_parsed)::SMALLINT,
+    CASE EXTRACT(ISODOW FROM t.date_parsed)::SMALLINT WHEN 1 THEN 'Mo' ... END,
+2. load_all_to_gold GROUP BY — missing comma after first line
+sqlGROUP BY
+    t.date_parsed::date,
+    EXTRACT(HOUR FROM t.date_parsed) AS hour    -- ← no comma before next line
+    EXTRACT(ISODOW ...
+3. load_all_to_gold SELECT — missing comma after EXTRACT(HOUR ...)
+sqlEXTRACT(HOUR FROM t.date_parsed) AS hour    -- ← missing comma
+EXTRACT(ISODOW FROM t.date_parsed)::SMALLINT AS day_of_week_num,
+4. load_dashboard — get_dq_engine still not called as a function
+pythondq_engine = get_dq_engine   # ← missing ()
+load_all_to_gold was fixed but load_dashboard was not. Will fail at runtime when the watermark recovery path is hit.
+
+🟠 Logic Issues (Not Yet Addressed)
+5. load_all_to_gold — gold_processed_at never set on fresh INSERT
+Only set in the ON CONFLICT ... DO UPDATE. New rows get NULL, which breaks the watermark recovery query SELECT MAX(gold_processed_at). Fix: add gold_processed_at, NOW() to the INSERT column list and SELECT.
+6. load_dashboard — v85 still computed as weighted mean of hourly percentiles
+As discussed — needs to be replaced with a CTE joining directly to silver.traffic. Still the old broken formula in this version.
+7. load_dashboard — day_of_week_num and day_of_week_name missing from GROUP BY
+They're in the INSERT column list and SELECT but not grouped. PostgreSQL will reject this since they're not aggregates and not in GROUP BY. Fix: add both to GROUP BY, or since they're deterministic from date, derive them from date directly.
+8. load_dashboard — watermark filter may produce incomplete daily totals
+WHERE gold_processed_at > :watermark can miss hourly rows for a date that was partially loaded in a prior run. As discussed, consider filtering on date IN (SELECT DISTINCT date FROM gold.export WHERE gold_processed_at > :watermark) instead.
+
+🟡 Minor / Polish
+9. _update_pairs — unfinished TODO
+python## i want to extract the number of missions & mission Id...
+Needs a RETURNING mission_id clause on the UPDATE plus logging of the returned IDs, or remove the comment.
+10. load_all_to_gold — result used outside with block
+result.rowcount and return result.rowcount, today are both outside the with engine.connect() block. Works due to SQLAlchemy caching but fragile — move the logger line inside, and assign rowcount = result.rowcount before the block closes.
+11. load_dashboard — same result scoping issue as #10

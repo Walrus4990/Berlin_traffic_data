@@ -94,7 +94,10 @@ CREATE TABLE IF NOT EXISTS silver.traffic (
     silver_processed_at                 TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_silver_traffic_source_file ON silver.traffic (source_file); --to make dedup quicker
+CREATE INDEX IF NOT EXISTS idx_silver_traffic_source_file ON silver.traffic (source_file); --to make bronze dedup quicker
+CREATE INDEX IF NOT EXISTS idx_silver_traffic_processed_at ON silver.traffic (silver_processed_at); --- to make gold dedup faster
+CREATE INDEX IF NOT EXISTS idx_silver_traffic_mission_date ON silver.traffic (mission_id, date_parsed); --- to make time aggregation faster
+
 
 CREATE TABLE IF NOT EXISTS silver.staging_traffic (
     mission_id                          INTEGER,
@@ -136,6 +139,8 @@ CREATE TABLE IF NOT EXISTS gold.export (
     end_date                    TIMESTAMP,
     date                        DATE,
     hour                        SMALLINT,
+    day_of_week_num             SMALLINT,  -- 1=Monday … 7=Sunday
+    day_of_week_name            TEXT,      -- Mo, Di, Mi, Do, Fr, Sa, So
     street                      TEXT,
     street_number               TEXT,
     zipcode                     TEXT,
@@ -175,6 +180,7 @@ CREATE TABLE IF NOT EXISTS gold.dashboard ( -- one row per day
     start_date                  TIMESTAMP,
     end_date                    TIMESTAMP,
     date                        DATE,
+    day_of_week                 TEXT,
     streetnr                    TEXT,
     city                        TEXT,
     location_description        TEXT,
@@ -190,16 +196,24 @@ CREATE TABLE IF NOT EXISTS gold.dashboard ( -- one row per day
     v_delivery_van              NUMERIC,
     v_motorbike                 NUMERIC,
     v_lorry                     NUMERIC,
-    v_other                     NUMERIC,
     v85                         NUMERIC,    -- 85th-percentile speed (excl. fahrrad)
-    modal_share_car             NUMERIC,
-    modal_share_bicycle         NUMERIC,
-    modal_share_delivery_van    NUMERIC,
-    modal_share_motorbike       NUMERIC,
-    modal_share_lorry           NUMERIC,
-    modal_share_other           NUMERIC,
     is_pair                     BOOLEAN,
     paired_mission_id           INTEGER,
     dashboard_processed_at      TIMESTAMP DEFAULT NOW(),
     UNIQUE (mission_id, date) --- adds condition that these three together must not have duplicates
+);
+
+CREATE TABLE IF NOT EXISTS gold.ganglinien (
+    mission_id                  INTEGER,
+    date                        DATE,
+    hour                        TEXT,
+    day_of_week                 TEXT,
+    streetnr                    TEXT,
+    car                         INTEGER,
+    bicycle                     INTEGER,
+    delivery_van                INTEGER,
+    motorbike                   INTEGER,
+    lorry                       INTEGER,
+    ganglinien_processed_at     TIMESTAMP DEFAULT NOW(),
+    UNIQUE (mission_id, date, hour) --- adds condition that these three together must not have duplicates
 );
