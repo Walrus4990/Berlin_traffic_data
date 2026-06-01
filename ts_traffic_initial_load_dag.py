@@ -153,10 +153,23 @@ def ts_traffic_initial_load():
         import logging
         import sys
         sys.path.insert(0, dag_dir)
-        from etl.dashboard import load_dashboard
+        from etl.gold import load_dashboard
         logger = logging.getLogger(__name__)
         rows_inserted, load_date = load_dashboard("initial")
         logger.info("%d new rows appended to gold.dashboard and dashboard watermark updated with date %s", rows_inserted, load_date)
+
+    @task.virtualenv(requirements=REQUIREMENTS,
+                     #execution_timeout=timedelta(hours=3)  #commented out to fail fast uncomment in prod
+    )
+    def run_load_ganglinien(dag_dir: str) -> None:
+        """Loads tabe for Ganglinien chart"""
+        import logging
+        import sys
+        sys.path.insert(0, dag_dir)
+        from etl.gold import load_ganglinien
+        logger = logging.getLogger(__name__)
+        rows_inserted, load_date = load_ganglinien("initial")
+        logger.info("%d new rows appended to gold.ganglinien and ganglinien watermark updated with date %s", rows_inserted, load_date)
 
     # ── Dependencies ──────────────────────────────────────────────────────────
     complete_traffic_download = run_complete_download(dag_dir=DAG_DIR)
@@ -168,6 +181,7 @@ def ts_traffic_initial_load():
     silver_validate = run_validate_silver(dag_dir=DAG_DIR)
     gold_export = run_load_all_to_gold(dag_dir=DAG_DIR)
     gold_dashboard = run_load_dashboard(dag_dir=DAG_DIR)
+    gold_ganglinien = run_load_ganglinien(dag_dir=DAG_DIR)
     #gold_publish =
 
 
@@ -176,6 +190,7 @@ def ts_traffic_initial_load():
     silver_traffic >> silver_validate
     bronze_ref>>silver_ref
     [silver_ref, silver_traffic] >> gold_export >> gold_dashboard
+    gold_export >> gold_ganglinien
 
 
 ts_traffic_initial_load()

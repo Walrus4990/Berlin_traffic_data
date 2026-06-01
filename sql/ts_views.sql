@@ -1,8 +1,21 @@
 -- Berlin Traffic Pipeline Schema
 -- Superset Dashboard view
 
+------ map
+SELECT
+  date,
+  mission_id,
+  streetnr,
+  lat,
+  lon,
+  ROUND(AVG(v85)::numeric, 0)    AS "V85",
+  ROUND(AVG(car)::numeric, 0) AS "Autos pro Tag",
+  ROUND((AVG(bicycle)::numeric, 0) AS "Fahrräder"
+FROM gold.dashboard
+GROUP BY date, mission_id, streetnr
+
 ------ v85 displayed when
-SQL_V85 = """
+
 CREATE OR REPLACE VIEW gold.big_number_v85 AS
 SELECT
     mission_id,
@@ -10,10 +23,10 @@ SELECT
     date,
     v85
 FROM gold.dashboard
-"""
+
 
 ------ Modalsplit - needs wide format tabel for Superset display
-SQL_MODALSPLIT = """
+
 CREATE OR REPLACE VIEW gold.modalsplit AS
 SELECT date, mission_id, streetnr, 'Auto' AS metric, car AS value FROM gold.dashboard
 UNION ALL
@@ -26,9 +39,11 @@ UNION ALL
 SELECT date, mission_id, streetnr, 'Lieferwagen' AS metric, delivery_van AS value FROM gold.dashboard
 UNION ALL
 SELECT date, mission_id, streetnr, 'Sonstige' AS metric, other AS value FROM gold.dashboard;
-"""
 
-SQL_UEBERSICHT = """
+---------- overview table
+-- Converts wide table to long format for table chart
+-- Includes daily average and speed per vehicle type where available
+
 CREATE OR REPLACE VIEW gold.summary_table AS
 SELECT 1 AS sort_order, 'Auto' AS "Fahrzeug", SUM(car) AS "insgesamt", AVG(car) AS "Durchschnitt (tgl.)", AVG(v_car) AS "Geschwindigkeit" FROM gold.dashboard WHERE 1=1
 UNION ALL
@@ -42,20 +57,18 @@ SELECT 5, 'Motorrad', SUM(motorbike), AVG(motorbike), AVG(v_motorbike) FROM gold
 UNION ALL
 SELECT 6, 'Sonstige', SUM(other), AVG(other), AVG(v_other) FROM gold.dashboard WHERE 1=1
 ORDER BY sort_order;
-"""
 
 
---- Simpler ganglinie — bar chart with raw hourly sums (date filter applied by Superset)
-SQL_GANGLINIE = """
+-----Ganglinien - bar chart average number count for in each hour
+
 CREATE OR REPLACE VIEW gold.ganglinie AS
 SELECT
-    date,
     hour,
-    mission_id,
-    bicycle,
-    car,
-    lorry,
-    motorbike,
-    delivery_van
+    AVG(bicycle) as "Fahrrad",
+    AVG(car) AS "Auto",
+    AVG(lorry) AS "LKW",
+    AVG(motorbike) AS "Motorrad",
+    AVG(delivery_van) AS "Lieferwagen"
 FROM gold.export
-"""
+WHERE date >= [filter_start] AND date <= [filter_end]
+GROUP BY hour
