@@ -31,11 +31,6 @@ data shape problem.
 aggregates the sensor data, stores it in a database, and surfaces it 
 via an interactive dashboard and a downloadable Excel summary file.
 
-**What the data shows:** On one residential street converted to a 
-Fahrradstraße in late 2024, cycling increased by 53 percent in absolute 
-numbers after the conversion. Car traffic decreased by 3 percent. The 
-cycling share of total traffic rose from 64 to 74 percent.
-
 ## Stack
 
 Hosted on a managed Kubernetes cluster provided by the CityLAB Data Hub
@@ -46,22 +41,20 @@ Hosted on a managed Kubernetes cluster provided by the CityLAB Data Hub
 * PostgreSQL for cleaned and aggregated data
 * Superset for dashboards
 
-## Pipeline
+## Pipeline (etl/)
 
-1. Ingest from manufacturer portal into MinIO buckets
+1. Ingest from manufacturer portal into MinIO buckets (ddewb*.py)
 2. Archive raw data to MinIO
-3. Clean with pandas (deduplication, format standardisation, 
-   GPS coordinates added)
-4. Join location, deployment and traffic tables
-5. Compute indicators (modal split, V85, speed distributions, 
-   flow by hour and weekday)
-6. Write to PostgreSQL
-7. Surface via Superset dashboard and Excel export
+3. Clean with pandas (deduplication, format standardisation) (silver*.py)
+4. Compute indicators (modal split, V85, speed distributions, - silver*.py))
+5. Join location, mission and traffic tables. Aggregate (gold*.py)
+6. Write to PostgreSQL throughout (bronze, silver, godl layer)
+7. Surface via Superset dashboard (dashboard.py) and Excel export
 
 ## Useful docs
 
-* Data structure and pipeline dataflow: 
-  documents/indicator_def_calc_translation.md
+* Data structure: documents/ADR/original_schemas_keys_merging_strategy.md
+* Indicator definitions: documents/indicator_def_calc_translation.md
 
 ## Reuse
 
