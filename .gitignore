@@ -14,3 +14,5 @@ etl/testingest.py
 *.parquet
 *.pptx
 data/
+.venv38/
+*.so
