@@ -67,14 +67,13 @@ open an issue or get in touch.
 ## Dev Setup
 
 1. Clone the repo
-2. Copy `.env.example` to `.env` and fill in your credentials
+2. Copy `.env.example` to `.env` and fill in your DDWEB credentials. All other values work as-is for local development.
 3. Create a virtual environment: `python3 -m venv venv`
 4. Activate: `source venv/bin/activate`
 5. Install dependencies: `pip install -r requirements.txt`
 6. Start the stack: `docker compose up`
 
-**Fresh start:** If volumes have been wiped, recreate the MinIO bucket
-before running the pipeline:
+**Fresh start:** If volumes have been wiped, recreate the MinIO bucket before running the pipeline:
 
 `docker exec -it $(docker ps -qf "name=minio") sh -c "mc alias set
 local http://localhost:9000 minioadmin minioadmin && mc mb
