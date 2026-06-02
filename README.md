@@ -62,8 +62,6 @@ Hosted on a managed Kubernetes cluster provided by the CityLAB Data Hub
 
 * Data structure and pipeline dataflow: 
   documents/indicator_def_calc_translation.md
-* GitHub working instructions: 
-  documents/git_clone_branch_pull_instructions.md
 
 ## Reuse
 
