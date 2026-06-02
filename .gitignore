@@ -5,7 +5,12 @@ venv/
 .ipynb_checkpoints/
 __pycache__/
 *.pyc
-data/raw_full/
 move_raw_data_to_vm.bash
 etl/testingest.py
 .env
+*.xlsx
+*.xls
+*.csv
+*.parquet
+*.pptx
+data/
