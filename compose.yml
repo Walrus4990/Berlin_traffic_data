@@ -24,9 +24,18 @@ x-airflow-common-env: &airflow-common-env
   # External API
   DDWEB_EMAIL: ${DDWEB_EMAIL}
   DDWEB_PASSWORD: ${DDWEB_PASSWORD}
-  # Python
-  PYTHONPATH: /opt/airflow
-  DOWNLOAD_DIR: /opt/airflow/data/raw
+  # Superset
+  SUPERSET_URL: ${SUPERSET_URL}
+  SUPERSET_DASHBOARD_ZIP_PATH: ${SUPERSET_DASHBOARD_ZIP_PATH}
+  SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER}
+  SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD}
+  # Pass access for Postgres to Supeset
+  POSTGRES_TRAFFIC_USER: ${POSTGRES_TRAFFIC_USER}
+  POSTGRES_TRAFFIC_PASSWORD: ${POSTGRES_TRAFFIC_PASSWORD}
+  POSTGRES_TRAFFIC_DB: ${POSTGRES_TRAFFIC_DB}
+  POSTGRES_TRAFFIC_HOST: ${POSTGRES_TRAFFIC_HOST}
+  POSTGRES_TRAFFIC_PORT: ${POSTGRES_TRAFFIC_PORT}
+
 
 x-airflow-volumes: &airflow-volumes
   - ./ts_traffic_initial_load_dag.py:/opt/airflow/dags/ts_traffic_initial_load_dag.py
@@ -203,6 +212,8 @@ services:
         condition: service_healthy
     environment:
       SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
+      SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD}
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8088/health || exit 1"]
       interval: 30s
