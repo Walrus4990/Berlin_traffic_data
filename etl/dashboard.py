@@ -1,14 +1,13 @@
 import logging
 import os
 import requests
-from pathlib import Path
 import json
 import uuid
 import time
 import zipfile
 import io
 import re
-from dotenv import dotenv_values
+
 
 logger = logging.getLogger(__name__)
 DB_CONNECTION_NAME = "berlin_traffic"
@@ -16,17 +15,16 @@ DB_CONNECTION_NAME = "berlin_traffic"
 # --------------------Authenticate to Superset-----------------------
 
 def _config() -> dict:
-    cfg = dotenv_values(Path(__file__).parent.parent / ".env")
     return {
-        "SUPERSET_URL":              cfg["SUPERSET_URL"],
-        "SUPERSET_ADMIN_USER":       cfg["SUPERSET_ADMIN_USER"],
-        "SUPERSET_ADMIN_PASSWORD":   cfg["SUPERSET_ADMIN_PASSWORD"],
-        "POSTGRES_TRAFFIC_USER":     cfg["POSTGRES_TRAFFIC_USER"],
-        "POSTGRES_TRAFFIC_PASSWORD": cfg["POSTGRES_TRAFFIC_PASSWORD"],
-        "POSTGRES_TRAFFIC_HOST":     cfg["POSTGRES_TRAFFIC_HOST"],
-        "POSTGRES_TRAFFIC_PORT":     cfg["POSTGRES_TRAFFIC_PORT"],
-        "POSTGRES_TRAFFIC_DB":       cfg["POSTGRES_TRAFFIC_DB"],
-        "SUPERSET_DASHBOARD_ZIP_PATH": cfg["SUPERSET_DASHBOARD_ZIP_PATH"],
+        "SUPERSET_URL":              os.environ["SUPERSET_URL"],
+        "SUPERSET_ADMIN_USER":       os.environ["SUPERSET_ADMIN_USER"],
+        "SUPERSET_ADMIN_PASSWORD":   os.environ["SUPERSET_ADMIN_PASSWORD"],
+        "POSTGRES_TRAFFIC_USER":     os.environ["POSTGRES_TRAFFIC_USER"],
+        "POSTGRES_TRAFFIC_PASSWORD": os.environ["POSTGRES_TRAFFIC_PASSWORD"],
+        "POSTGRES_TRAFFIC_HOST":     os.environ["POSTGRES_TRAFFIC_HOST"],
+        "POSTGRES_TRAFFIC_PORT":     os.environ["POSTGRES_TRAFFIC_PORT"],
+        "POSTGRES_TRAFFIC_DB":       os.environ["POSTGRES_TRAFFIC_DB"],
+        "SUPERSET_DASHBOARD_ZIP_PATH": os.environ["SUPERSET_DASHBOARD_ZIP_PATH"],
     }
 
 def _authenticate(cfg: dict) -> requests.Session:
@@ -90,35 +88,6 @@ def _db_connection(session: requests.Session, cfg: dict) -> int:
     return db_id
 
 
-# def import_dashboard() -> None:
-#     cfg = _config()
-#     session = _authenticate(cfg)
-#     zip_path = cfg["SUPERSET_DASHBOARD_ZIP_PATH"]
-
-#     session.headers.pop("Content-Type", None)
-
-#     with zipfile.ZipFile(zip_path) as z:
-#         db_key = next(n for n in z.namelist() if "/databases/" in n)
-
-#     passwords = json.dumps({db_key: cfg["POSTGRES_TRAFFIC_PASSWORD"]})
-
-#     print("db_key:", db_key)
-#     print("passwords:", passwords)
-#     print("Headers at import time:", dict(session.headers))
-
-#     with open(zip_path, "rb") as f:
-#         resp = session.post(
-#             f"{cfg['SUPERSET_URL']}/api/v1/assets/import/",
-#             files={"bundle": ("dashboard.zip", f, "application/zip")},
-#             data={"overwrite": "true", "passwords": passwords},
-#         )
-
-#     if resp.ok:
-#         print("Dashboard imported successfully from", zip_path)
-#     else:
-#         print("Dashboard import failed:", resp.status_code, resp.text)
-#         resp.raise_for_status()
-
 def import_dashboard() -> None:
     cfg = _config()
     session = _authenticate(cfg)
@@ -147,9 +116,9 @@ def import_dashboard() -> None:
     )
 
     if resp.ok:
-        print("Dashboard imported successfully from", zip_path)
+        logger.info("Dashboard imported successfully from", zip_path)
     else:
-        print("Dashboard import failed:", resp.status_code, resp.text)
+        logger.error("Dashboard import failed:", resp.status_code, resp.text)
         resp.raise_for_status()
 
 #-----------------------------------------------------------------------------

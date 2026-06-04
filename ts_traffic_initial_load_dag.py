@@ -64,7 +64,6 @@ def ts_traffic_initial_load():
         complete_download()
         logger.info("Initial download finished at %s", datetime.now(tz=pytz.timezone("Europe/Berlin")))
 
-
     @task.virtualenv(requirements=REQUIREMENTS,
                      #execution_timeout=timedelta(hours=5)  #commented out to fail fast uncomment in prod
     )
@@ -171,6 +170,20 @@ def ts_traffic_initial_load():
         rows_inserted, load_date = load_ganglinien("initial")
         logger.info("%d new rows appended to gold.ganglinien and ganglinien watermark updated with date %s", rows_inserted, load_date)
 
+    @task.virtualenv(requirements=REQUIREMENTS,
+                     #execution_timeout=timedelta(hours=3)  #commented out to fail fast uncomment in prod
+    )
+    def run_import_dashboard(dag_dir: str) -> None:
+        """imports the .zip file to set up teh dashboard and connect to gold.dashpboard and gold.ganglinien"""
+        import logging
+        import sys
+        sys.path.insert(0, dag_dir)
+        from etl.dashboard import import_dashboard
+        logger = logging.getLogger(__name__)
+        logger.info("Starting dashboard import")
+        import_dashboard()
+        logger.info("Dashboard import task complete")
+
     # ── Dependencies ──────────────────────────────────────────────────────────
     complete_traffic_download = run_complete_download(dag_dir=DAG_DIR)
     bronze_ref = run_load_ref_to_bronze(dag_dir=DAG_DIR)
@@ -182,7 +195,7 @@ def ts_traffic_initial_load():
     gold_export = run_load_all_to_gold(dag_dir=DAG_DIR)
     gold_dashboard = run_load_dashboard(dag_dir=DAG_DIR)
     gold_ganglinien = run_load_ganglinien(dag_dir=DAG_DIR)
-    #gold_publish =
+    dashboard_setup = run_import_dashboard(dag_dir=DAG_DIR)
 
 
     [bronze_ref, complete_traffic_download] >> bronze_traffic >> bronze_validate
@@ -191,6 +204,6 @@ def ts_traffic_initial_load():
     bronze_ref>>silver_ref
     [silver_ref, silver_traffic] >> gold_export >> gold_dashboard
     gold_export >> gold_ganglinien
-
+    [gold_dashboard, gold_ganglinien] >> dashboard_setup
 
 ts_traffic_initial_load()

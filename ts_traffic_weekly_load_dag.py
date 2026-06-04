@@ -89,6 +89,21 @@ def ts_traffic_weekly_load():
         logger.info("Validation result: %s", result)
 
     @task.virtualenv(requirements=REQUIREMENTS,
+                     #execution_timeout=timedelta(minutes=15)  #commented out to fail fast uncomment in prod
+    )
+    def run_build_mission_location_to_silver(dag_dir: str) -> None:
+        """Merge missions and locations from bronze.mission, bronze.location into silver_ref_mission_location
+        Identifies sensor"""
+        import logging
+        import sys
+        sys.path.insert(0, dag_dir)
+        from etl.silver_ref import build_mission_location_to_silver
+        logger = logging.getLogger(__name__)
+        rows = build_mission_location_to_silver("weekly")
+        logger.info("%d new rows rows appended to silver_ref_mission_location", rows)
+
+
+    @task.virtualenv(requirements=REQUIREMENTS,
                      #execution_timeout=timedelta(hours=3)  #commented out to fail fast uncomment in prod
     )
     def run_load_traffic_to_silver(dag_dir: str) -> None:
@@ -114,108 +129,58 @@ def ts_traffic_weekly_load():
         result = check_silver_dq()
         logger.info("Validation result: %s", result)
 
+    @task.virtualenv(requirements=REQUIREMENTS,
+                     #execution_timeout=timedelta(hours=3)  #commented out to fail fast uncomment in prod
+    )
+    def run_load_all_to_gold(dag_dir: str) -> None:
+        """Aggregates silver.traffic into hourly data with vehcle count and speeds.
+        Merges traffic data to silver.ref_mission_location. Updates sensor pairs."""
+        import logging
+        import sys
+        sys.path.insert(0, dag_dir)
+        from etl.gold import load_all_to_gold
+        logger = logging.getLogger(__name__)
+        rows_inserted, load_date = load_all_to_gold("weekly")
+        logger.info("%d new rows appended to gold.export and export watermark updated with date %s", rows_inserted, load_date)
+
 
     @task.virtualenv(requirements=REQUIREMENTS,
                      #execution_timeout=timedelta(hours=3)  #commented out to fail fast uncomment in prod
     )
-    def run_gold_layer(dag_dir: str) -> None:
-        """Run gold aggregation using Monica's gold_data_layer.py"""
+    def run_load_dashboard(dag_dir: str) -> None:
+        """Aggregates gold.export into daily data. Updates SQL queries for dashboard"""
         import logging
         import sys
         sys.path.insert(0, dag_dir)
-        from etl.gold import run_gold
-        from utils.db import get_traffic_engine
+        from etl.gold import load_dashboard
         logger = logging.getLogger(__name__)
-        engine= get_traffic_engine()
-        result = run_gold(engine)
-        logger.info("Gold layer result: %s", result)
+        rows_inserted, load_date = load_dashboard("weekly")
+        logger.info("%d new rows appended to gold.dashboard and dashboard watermark updated with date %s", rows_inserted, load_date)
 
     @task.virtualenv(requirements=REQUIREMENTS,
                      #execution_timeout=timedelta(hours=3)  #commented out to fail fast uncomment in prod
     )
-    def run_publish(dag_dir: str) -> None:
-        """Export gold.traffic to MinIO as CSV"""
+    def run_load_ganglinien(dag_dir: str) -> None:
+        """Loads tabe for Ganglinien chart"""
         import logging
         import sys
         sys.path.insert(0, dag_dir)
-        from etl.publish import publish_gold
+        from etl.gold import load_ganglinien
         logger = logging.getLogger(__name__)
-        publish_gold()
-        logger.info("Gold data published to MinIO")
+        rows_inserted, load_date = load_ganglinien("weekly")
+        logger.info("%d new rows appended to gold.ganglinien and ganglinien watermark updated with date %s", rows_inserted, load_date)
 
-#BUGGY _ NEEDS TIDYING
-
-# def refresh_superset(**kwargs):
-#     import os, requests
-#     from utils.db import get_traffic_engine
-
-#     base = "http://superset:8088"
-#     session = requests.Session()
-
-#     # --- login ---
-#     r = session.post(f"{base}/api/v1/security/login", json={
-#         "username": os.getenv("SUPERSET_ADMIN_USER", "admin"),  #remove hardcoding in prod
-#         "password": os.getenv("SUPERSET_ADMIN_PASSWORD", "admin"),
-#         "provider": "db"
-#     })
-#     r.raise_for_status()
-#     token = r.json()["access_token"]
-#     headers = {"Authorization": f"Bearer {token}"}
-
-#     csrf = session.get(f"{base}/api/v1/security/csrf_token/", headers=headers)
-#     csrf_token = csrf.json()["result"]
-#     headers["X-CSRFToken"] = csrf_token
-#     headers["Referer"] = base
-
-#    # ---------------- DB connection ----------------
-#     # TODO: replace with env var — get_traffic_engine() should not be used to extract URI
-
-#     engine= get_traffic_engine()
-#     sqlalchemy_uri = str(engine.url)
-
-#     dbs = session.get(f"{base}/api/v1/database/", headers=headers).json()
-
-#     db = next(
-#         (d for d in dbs.get("result", []) if d.get("database_name") == "traffic_db"),
-#         None
-#     )
-
-#     if not db:
-#         resp = session.post(f"{base}/api/v1/database/", json={
-#             "database_name": "traffic_db", #why the name, check on final tidy - it's teh superset db connection'
-#             "sqlalchemy_uri": sqlalchemy_uri
-#         }, headers=headers)
-#         db = resp.json()
-
-#     db_id = db["id"]
-
-#     # ---------------- dataset: gold.traffic ----------------
-#     datasets = session.get(f"{base}/api/v1/dataset/", headers=headers).json()
-
-#     exists = any(
-#         d.get("schema") == "gold" and d.get("table_name") == "traffic"
-#         for d in datasets.get("result", [])
-#     )
-
-#     if not exists:
-#         session.post(f"{base}/api/v1/dataset/", json={
-#             "database": db_id,
-#             "schema": "gold",
-#             "table_name": "traffic"
-#         }, headers=headers)
-
-#     # ---------------- dashboard import ----------------
-#     try:
-#         with open("/app/superset_home/exports/dashboard_export_20260419T194107.zip", "rb") as f:
-#             session.post(
-#                 f"{base}/api/v1/dashboard/import/",
-#                 headers=headers,
-#                 files={"formData": f},
-#                 data={"overwrite": "true", "passwords": '{"databases/traffic_db.yaml": "traffic"}'}
-#             )
-#     except FileNotFoundError:
-#         logger.warning("Dashboard zip not found, skipping import")
-
+    @task.virtualenv(requirements=REQUIREMENTS,
+                     #execution_timeout=timedelta(hours=3)  #commented out to fail fast uncomment in prod
+    )
+    def run_publish_csv(dag_dir: str) -> None:
+        """Export gold.export as dated CSV to MinIO"""
+        import logging, sys
+        sys.path.insert(0, dag_dir)
+        from etl.publish import publish_csv
+        logger = logging.getLogger(__name__)
+        filename = publish_csv()
+        logger.info("MinIO export complete: %s", filename)
 
 
     # ── Dependencies ──────────────────────────────────────────────────────────
@@ -223,14 +188,21 @@ def ts_traffic_weekly_load():
     ingest = run_ingest_traffic(dag_dir=DAG_DIR)
     bronze_traffic = run_load_traffic_to_bronze(dag_dir=DAG_DIR)
     bronze_validate = run_validate_bronze(dag_dir=DAG_DIR)
+    silver_ref = run_build_mission_location_to_silver(dag_dir=DAG_DIR)
     silver_traffic = run_load_traffic_to_silver(dag_dir=DAG_DIR)
     silver_validate = run_validate_silver(dag_dir=DAG_DIR)
-    gold = run_gold_layer(dag_dir=DAG_DIR)
-    publish = run_publish(dag_dir=DAG_DIR)
+    gold_export = run_load_all_to_gold(dag_dir=DAG_DIR)
+    gold_dashboard = run_load_dashboard(dag_dir=DAG_DIR)
+    gold_ganglinien = run_load_ganglinien(dag_dir=DAG_DIR)
+    publish = run_publish_csv(dag_dir=DAG_DIR)
+
 
     [bronze_ref, ingest] >> bronze_traffic >> bronze_validate
-    bronze_traffic >> silver_traffic >> gold >> publish
+    bronze_traffic >> silver_traffic
     silver_traffic >> silver_validate
-    #Superset needs adding once fixed
+    bronze_ref>>silver_ref
+    [silver_ref, silver_traffic] >> gold_export >> gold_dashboard
+    gold_export >> gold_ganglinien
+    gold_export >> publish
 
 ts_traffic_weekly_load()

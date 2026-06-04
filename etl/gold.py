@@ -147,7 +147,7 @@ def _create_pairs_view(engine) -> None:
             SELECT
                 a.date,
                 a.mission_id,
-                a.streetnr AS "Standort",
+                a.streetnr,
                 b.streetnr AS "Gegenüberliegender Standort"
             FROM gold.dashboard a
             JOIN gold.dashboard b ON a.paired_mission_id = b.mission_id
