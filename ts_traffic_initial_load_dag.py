@@ -42,7 +42,7 @@ def ts_traffic_initial_load():
         """Fetch missions and locations from DDWeb portal → bronze.mission, bronze.location"""
         import logging
         import sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))
         from etl.bronze import load_ref_to_bronze
         logger = logging.getLogger(__name__)
         new_mission, new_location = load_ref_to_bronze()
@@ -57,7 +57,7 @@ def ts_traffic_initial_load():
         import pytz
         from datetime import datetime
         import sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))
         from etl.ddweb_ingest_traffic import complete_download
         logger = logging.getLogger(__name__)
         logger.info("Initial download started at %s", datetime.now(tz=pytz.timezone("Europe/Berlin")))
@@ -71,7 +71,7 @@ def ts_traffic_initial_load():
         """Read new parquet files from MinIO → append to bronze.traffic"""
         import logging
         import sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))
         from etl.bronze import load_traffic_to_bronze
         logger = logging.getLogger(__name__)
         rows = load_traffic_to_bronze()
@@ -84,7 +84,7 @@ def ts_traffic_initial_load():
         """Checks download, saves missing file info & error messages  → append to bronze.dq"""
         import logging
         import sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))
         from tests.test_ingest import check_bronze_completeness
         logger = logging.getLogger(__name__)
         result = check_bronze_completeness("initial")
@@ -98,7 +98,7 @@ def ts_traffic_initial_load():
         Identifies sensor"""
         import logging
         import sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))
         from etl.silver_ref import build_mission_location_to_silver
         logger = logging.getLogger(__name__)
         rows = build_mission_location_to_silver("initial")
@@ -111,7 +111,7 @@ def ts_traffic_initial_load():
         """Clean and enrich bronze data into silver tables"""
         import logging
         import sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))
         from etl.silver import load_traffic_to_silver
         logger = logging.getLogger(__name__)
         rows = load_traffic_to_silver()
@@ -124,7 +124,7 @@ def ts_traffic_initial_load():
         """Merges """
         import logging
         import sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))
         from tests.test_silver import check_silver_dq
         logger = logging.getLogger(__name__)
         result = check_silver_dq()
@@ -138,7 +138,7 @@ def ts_traffic_initial_load():
         Merges traffic data to silver.ref_mission_location. Updates sensor pairs."""
         import logging
         import sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))
         from etl.gold import load_all_to_gold
         logger = logging.getLogger(__name__)
         rows_inserted, load_date = load_all_to_gold("initial")
@@ -151,7 +151,7 @@ def ts_traffic_initial_load():
         """Aggregates gold.export into daily data. Updates SQL queries for dashboard"""
         import logging
         import sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))
         from etl.gold import load_dashboard
         logger = logging.getLogger(__name__)
         rows_inserted, load_date = load_dashboard("initial")
@@ -164,7 +164,7 @@ def ts_traffic_initial_load():
         """Loads tabe for Ganglinien chart"""
         import logging
         import sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))
         from etl.gold import load_ganglinien
         logger = logging.getLogger(__name__)
         rows_inserted, load_date = load_ganglinien("initial")
@@ -177,7 +177,7 @@ def ts_traffic_initial_load():
         """imports the .zip file to set up teh dashboard and connect to gold.dashpboard and gold.ganglinien"""
         import logging
         import sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))
         from etl.dashboard import import_dashboard
         logger = logging.getLogger(__name__)
         logger.info("Starting dashboard import")
