@@ -69,7 +69,7 @@ def ts_traffic_weekly_load():
         """Read new parquet files from MinIO → append to bronze.traffic"""
         import logging
         import sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))
         from etl.bronze import load_traffic_to_bronze
         logger = logging.getLogger(__name__)
         rows = load_traffic_to_bronze()
