@@ -24,8 +24,8 @@ with open(REQUIREMENTS_PATH, "r") as f:
     tags=["ts", "traffic", "weekly"],
     default_args={
         "owner": "ts",
-        "retries": 2,
-        "retry_delay": timedelta(hours=12),  #code is dynamic so should catch up failed dag runs without needing retry or catch-up
+        #"retries": 2,
+        #"retry_delay": timedelta(hours=12),  #code is dynamic so should catch up failed dag runs without needing retry or catch-up
     }
 )
 def ts_traffic_weekly_load():
@@ -42,7 +42,7 @@ def ts_traffic_weekly_load():
         """Fetch missions and locations from DDWeb portal → bronze.mission, bronze.location"""
         import logging
         import sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))  # dirname(dag_dir) means to go one level up from the DAG folder → /opt/airflow/
         from etl.bronze import load_ref_to_bronze
         logger = logging.getLogger(__name__)
         new_mission, new_location = load_ref_to_bronze()
@@ -56,7 +56,7 @@ def ts_traffic_weekly_load():
         """Download this week's traffic files from DDWeb portal → MinIO"""
         import logging
         import sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))
         from etl.ddweb_ingest_traffic import weekly_download
         logger = logging.getLogger(__name__)
         weekly_download()
@@ -82,7 +82,7 @@ def ts_traffic_weekly_load():
         """Checks download, saves missing file info & error messages  → append to bronze.dq"""
         import logging
         import sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))
         from tests.test_ingest import check_bronze_completeness
         logger = logging.getLogger(__name__)
         result = check_bronze_completeness("weekly")
@@ -96,7 +96,7 @@ def ts_traffic_weekly_load():
         Identifies sensor"""
         import logging
         import sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))
         from etl.silver_ref import build_mission_location_to_silver
         logger = logging.getLogger(__name__)
         rows = build_mission_location_to_silver("weekly")
@@ -110,7 +110,7 @@ def ts_traffic_weekly_load():
         """Clean and enrich bronze data into silver tables"""
         import logging
         import sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))
         from etl.silver import load_traffic_to_silver
         logger = logging.getLogger(__name__)
         rows = load_traffic_to_silver()
@@ -123,7 +123,7 @@ def ts_traffic_weekly_load():
         """Runs DQ checks on silver.staging_traffic and writes flag reports to DQ database."""
         import logging
         import sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))
         from tests.test_silver import check_silver_dq
         logger = logging.getLogger(__name__)
         result = check_silver_dq()
@@ -137,7 +137,7 @@ def ts_traffic_weekly_load():
         Merges traffic data to silver.ref_mission_location. Updates sensor pairs."""
         import logging
         import sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))
         from etl.gold import load_all_to_gold
         logger = logging.getLogger(__name__)
         rows_inserted, load_date = load_all_to_gold("weekly")
@@ -151,7 +151,7 @@ def ts_traffic_weekly_load():
         """Aggregates gold.export into daily data. Updates SQL queries for dashboard"""
         import logging
         import sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))
         from etl.gold import load_dashboard
         logger = logging.getLogger(__name__)
         rows_inserted, load_date = load_dashboard("weekly")
@@ -164,7 +164,7 @@ def ts_traffic_weekly_load():
         """Loads tabe for Ganglinien chart"""
         import logging
         import sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))
         from etl.gold import load_ganglinien
         logger = logging.getLogger(__name__)
         rows_inserted, load_date = load_ganglinien("weekly")
@@ -176,7 +176,7 @@ def ts_traffic_weekly_load():
     def run_publish_csv(dag_dir: str) -> None:
         """Export gold.export as dated CSV to MinIO"""
         import logging, sys
-        sys.path.insert(0, dag_dir)
+        sys.path.insert(0, os.path.dirname(dag_dir))
         from etl.publish import publish_csv
         logger = logging.getLogger(__name__)
         filename = publish_csv()
